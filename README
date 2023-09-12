@@ -18,14 +18,17 @@ pip install aicsimageio readlif>=0.6.4
 # install vessel analysis package
 pip install git+https://github.com/MMV-Lab/vessel_analysis_3d.git
 
-# install others
+# clone this repo and install other dependencies
+git clone https://github.com/MMV-Lab/string_vessel_project.git
+cd string_vessel_project
 pip install -r requirements.txt
-
 ```
 
 ## How to use
 
 Follow the in-line instructions in each jupyter notebook. Here, we just provide a general overview.
+
+Download all trained models from this [LINK](https://ambiomcloud.isas.de/index.php/s/CwcfFRt8eQ9gKWj)
 
 ### part 1: 
 

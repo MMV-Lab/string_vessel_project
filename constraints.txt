@@ -1,0 +1,5 @@
+pydantic==2.11.5
+fastapi>=0.100.0
+aicssegmentation>=0.4.0
+numcodecs==0.11.0
+zarr==2.15.0

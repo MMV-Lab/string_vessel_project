@@ -5,15 +5,15 @@
 * step 1: create a new [conda](https://docs.anaconda.com/free/anaconda/install/windows/) environment and activate it
 
 ```bash
-conda create -n stringvessel python==3.9
+conda create -y -n stringvessel python==3.11
 conda activate stringvessel
 ```
 
 * step 2: intall necessary dependency
 
 ```bash
-# install aicsimageio with Leica file support
-pip install aicsimageio readlif>=0.6.4
+# install Leica file support
+pip install readlif>=0.6.4
 
 # install vessel analysis package
 pip install git+https://github.com/MMV-Lab/vessel_analysis_3d.git
@@ -21,7 +21,7 @@ pip install git+https://github.com/MMV-Lab/vessel_analysis_3d.git
 # clone this repo and install other dependencies
 git clone https://github.com/MMV-Lab/string_vessel_project.git
 cd string_vessel_project
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt
 ```
 
 ## How to use

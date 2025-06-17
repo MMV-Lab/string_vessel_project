@@ -1,0 +1,36 @@
+mode: inference
+
+data:
+  inference_input:
+    dir: ./data/analysis_full/sliced
+    data_type: .tiff
+    reader_params:
+      dimension_order_out: "CYX" 
+      T: 0
+      Z: 0
+  preprocess:
+    - module_name: monai.transforms
+      func_name: NormalizeIntensity
+      params:
+        channel_wise: True
+  postprocess:
+    - module_name: mmv_im2im.postprocessing.basic_collection
+      func_name: generate_classmap
+
+model:
+  framework: ProbUnet
+  net:
+    module_name: mmv_im2im.models.nets.ProbUnet
+    func_name: ProbabilisticUNet
+    params:
+      in_channels: 2
+      n_classes: 3 # 0 background + 2 classes
+      latent_dim: 6
+  checkpoint:  ./ProbUnet_16_06_2025.ckpt
+  model_extra:
+    cpu_only: False
+trainer:
+  verbose: True
+  params:
+    gpus: 1
+    precision: 32

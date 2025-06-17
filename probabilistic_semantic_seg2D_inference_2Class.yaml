@@ -26,7 +26,7 @@ model:
       in_channels: 2
       n_classes: 3 # 0 background + 2 classes
       latent_dim: 6
-  checkpoint:  /mnt/eternus/users/Jair/sv_project/TrainProbUnet/Model/checkpoints/last.ckpt
+  checkpoint:  ./ProbUnet_16_06_2025.ckpt
   model_extra:
     cpu_only: False
 trainer:

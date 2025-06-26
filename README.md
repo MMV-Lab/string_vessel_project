@@ -9,19 +9,16 @@ conda create -y -n stringvessel python==3.11
 conda activate stringvessel
 ```
 
-* step 2: intall necessary dependency
-
-```bash
-# install Leica file support
-pip install readlif>=0.6.4
+* step 2: intall necessary packages:
 
 # install vessel analysis package
 pip install git+https://github.com/MMV-Lab/vessel_analysis_3d.git
 
 # clone this repo and install other dependencies
+```
 git clone https://github.com/MMV-Lab/string_vessel_project.git
 cd string_vessel_project
-pip install -r requirements.txt -c constraints.txt
+pip install -r requirements.txt 
 ```
 
 ## How to use

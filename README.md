@@ -15,6 +15,7 @@ conda activate stringvessel
 pip install git+https://github.com/MMV-Lab/vessel_analysis_3d.git
 
 # clone this repo and install other dependencies
+```
 git clone https://github.com/MMV-Lab/string_vessel_project.git
 cd string_vessel_project
 pip install -r requirements.txt 

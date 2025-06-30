@@ -11,7 +11,7 @@ conda activate stringvessel
 
 # step 2: intall necessary packages:
 
-* install vessel analysis package
+ install vessel analysis package
 ```bash
 pip install git+https://github.com/MMV-Lab/vessel_analysis_3d.git
 ```

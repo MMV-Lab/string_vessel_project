@@ -9,14 +9,16 @@ conda create -y -n stringvessel python==3.11
 conda activate stringvessel
 ```
 
-* step 2: intall necessary packages:
+# step 2: intall necessary packages:
 
-# install vessel analysis package
+* install vessel analysis package
+```bash
 pip install git+https://github.com/MMV-Lab/vessel_analysis_3d.git
+```
 
 # clone this repo and install other dependencies
 
-```
+```bash
 git clone https://github.com/MMV-Lab/string_vessel_project.git
 cd string_vessel_project
 pip install -r requirements.txt 

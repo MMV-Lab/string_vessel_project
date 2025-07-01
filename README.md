@@ -5,7 +5,7 @@
 * step 1: create a new [conda](https://docs.anaconda.com/free/anaconda/install/windows/) environment and activate it
 
 ```bash
-conda create -y -n stringvessel python==3.11
+conda create -y -n stringvessel -c conda-forge python=3.11
 conda activate stringvessel
 ```
 

@@ -9,7 +9,7 @@ conda create -y -n stringvessel -c conda-forge python=3.11
 conda activate stringvessel
 ```
 
-* step 2: intall necessary packages:
+* step 2: install necessary packages:
 
 ```bash
 # install vessel analysis package

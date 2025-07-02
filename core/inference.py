@@ -18,7 +18,7 @@ from bioio import BioImage
 from bioio.writers import OmeTiffWriter
 from skimage.morphology import remove_small_objects, remove_small_holes
 from skimage.measure import label, regionprops
-from aicssegmentation.core.utils import topology_preserving_thinning
+from core.utils import topology_preserving_thinning
 from dataclasses import dataclass
 from pathlib import Path
 from pyrallis import field

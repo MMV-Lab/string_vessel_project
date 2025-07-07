@@ -1,6 +1,5 @@
-#This code is an adaptation for the code: https://github.com/TopoXLab/VesselAnalysis?tab=readme-ov-file
-#We implement grapg generation and numba aceleration
-#Related to the paper: https://arxiv.org/abs/2402.16894
+#This code is an adaptation for the code: https://github.com/TopoXLab/VesselAnalysis?tab=readme-ov-file, related to the paper: https://arxiv.org/abs/2402.16894
+#Here we implement graph generation, numba aceleration and gpu usage.
 
 import os
 from PIL import Image

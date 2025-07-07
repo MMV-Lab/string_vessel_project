@@ -1,4 +1,6 @@
 mmv_im2im[all]
 ipywidgets
-
-
+cripser
+simpleitk
+gudhi==3.7.0
+persim==0.3.8

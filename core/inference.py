@@ -36,6 +36,8 @@ from pyrallis.parsers import decoding
 from pyrallis.utils import Dataclass, PyrallisException
 from pyrallis.wrappers import DataclassWrapper
 from tqdm import tqdm
+import gc
+import torch
 
 
 logger = getLogger(__name__)
@@ -241,7 +243,10 @@ def create_inference_menu():
                     for zz in range(img.shape[1]):
                         im_input = img[:, zz, :, :]
                         seg = executor.process_one_image(im_input)
-                        out_list.append(np.squeeze(seg))
+                        seg_np = np.squeeze(seg)
+                        gc.collect()
+                        torch.cuda.empty_cache()
+                        out_list.append(seg_np)
                     seg_full = np.stack(out_list, axis=0)
 
                     # Attempt to remove pericytes by post-processing

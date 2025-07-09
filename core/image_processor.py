@@ -18,7 +18,7 @@ def _execute_processing_logic(use_dim_fix, get_channels, src_path_str, out_path_
 
     # specific where you want to save the splitted files
     out_path_3d = out_path_base / Path("split_3d")
-    out_path_pred = out_path_base / Path("pred")
+    out_path_pred = out_path_base / Path("model_predictions")
 
     out_path_base.mkdir(parents=True, exist_ok=True)
     out_path_3d.mkdir(parents=True, exist_ok=True)

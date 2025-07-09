@@ -11,6 +11,7 @@ from vessel_analysis_3d.graph.stats_reporting import report_everything
 
 import ipywidgets as widgets
 from IPython.display import display, clear_output
+from tqdm import tqdm
 
 def analysis_menu():
     """
@@ -116,10 +117,10 @@ def analysis_menu():
             save_name = out_path / Path("data_full_stats.csv")
 
             stats = []
-            num = 0
-            for fn in filenames:
-                num = num + 1
-                print(f"--Analyzing the result: {num}/{len(filenames)} ...")
+            print(f"{len(filenames)} files found to be analized")
+            for fn in tqdm(filenames, desc= "Analysis file progress "):
+               
+                
 
                 fileID = fn.stem
                 pred = BioImage(fn).get_image_data("ZYX", C=0, T=0)

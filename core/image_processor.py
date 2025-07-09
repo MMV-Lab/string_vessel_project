@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 from bioio import BioImage
 from bioio.writers import OmeTiffWriter
+from tqdm import tqdm
 
 def _execute_processing_logic(use_dim_fix, get_channels, src_path_str, out_path_base_str):
     """
@@ -37,11 +38,11 @@ def _execute_processing_logic(use_dim_fix, get_channels, src_path_str, out_path_
 
     print(f"Number of .lif files found: {len(filenames)}")
 
-    for fn in filenames:
-        print(f"\nProcessing file: {fn.name}")
+    for fn in tqdm(filenames, desc= "Processing file progress"):
+    
         reader = BioImage(fn)
         scene_list = reader.scenes
-        print(f"scene_list: {scene_list}")
+    
 
         # loop through all scenes
         for sname in scene_list:

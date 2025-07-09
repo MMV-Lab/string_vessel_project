@@ -230,7 +230,7 @@ def create_inference_menu():
                 # Get the data, run inference, and save the result
                 path_base = Path(selected_path_base)
                 input_path = path_base / Path("split_3d")
-                out_p = path_base / Path("pred_2class")
+                out_p = path_base / Path("model_predictions")
                 out_p.mkdir(parents=True, exist_ok=True)
 
                 filenames = sorted(input_path.glob("*.tiff"))

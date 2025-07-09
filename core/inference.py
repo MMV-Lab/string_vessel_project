@@ -35,6 +35,7 @@ from pyrallis.help_formatter import SimpleHelpFormatter
 from pyrallis.parsers import decoding
 from pyrallis.utils import Dataclass, PyrallisException
 from pyrallis.wrappers import DataclassWrapper
+from tqdm import tqdm
 
 
 logger = getLogger(__name__)
@@ -231,11 +232,9 @@ def create_inference_menu():
                 out_p.mkdir(parents=True, exist_ok=True)
 
                 filenames = sorted(input_path.glob("*.tiff"))
-
-                num = 0
-                for fn in filenames:
-                    num = num + 1
-                    print(f"--Predicting: {num}/{len(filenames)} ...")
+                print(f"{len(filenames)} files found to predict")
+                for fn in tqdm(filenames, desc= "Prediction file progress"):
+            
                     img = BioImage(fn).get_image_data("CZYX", T=0)
 
                     out_list = []

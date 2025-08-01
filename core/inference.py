@@ -265,12 +265,12 @@ def create_inference_menu():
 
                 filenames = sorted(input_path.glob("*.tiff"))
                 print(f"{len(filenames)} files found to predict")
-                for fn in tqdm(filenames, desc= "Prediction file progress"):
+                for fn in tqdm(filenames, desc= "Prediction file progress", position=0):
             
                     img = BioImage(fn).get_image_data("CZYX", T=0)
 
                     out_list = []    
-                    for zz in tqdm(range(img.shape[1]), desc= "Prediction in slice"):
+                    for zz in tqdm(range(img.shape[1]), desc= "Prediction in slice", leave=False, position=1):
                         im_input = img[:, zz, :, :]
                         seg = executor.process_one_image(im_input)
                         seg_np = np.squeeze(seg)
@@ -286,7 +286,7 @@ def create_inference_menu():
                         seg_2 = remove_small_objects(seg_full == 2, min_size=30)
                         seg_2_mid = np.logical_xor(seg_2, remove_small_objects(seg_2, min_size=300))
                                   
-                        for zz in tqdm(range(seg_2_mid.shape[0]), desc= "Perycite remotion in slice"):
+                        for zz in tqdm(range(seg_2_mid.shape[0]), desc= "Perycite remotion in slice", leave=False, position=2):
                             seg_label, num_obj = label(seg_2_mid[zz, :, :], return_num=True)
                             if num_obj > 0:
                                 stats = regionprops(seg_label)
@@ -306,7 +306,7 @@ def create_inference_menu():
                         seg_1_temp = remove_small_objects(seg_full == 1, min_size=50)
                         seg_2_temp = seg_full == 2
                                   
-                        for zz in tqdm(range(seg_full.shape[0]), desc= "Holes correction in slice"):
+                        for zz in tqdm(range(seg_full.shape[0]), desc= "Holes correction in slice", leave=False, position=3):
                             s_v = remove_small_holes(seg_1_temp[zz, :, :], area_threshold=hole_size_threshold)
                             seg_1_temp[zz, :, :] = s_v[:, :]
 
@@ -321,12 +321,13 @@ def create_inference_menu():
 
                     # Thickness adjustment
                     if apply_thickness:
-                        tqdm.write("Applying thickness adjustment...")
+                        tqdm.write("Applying thickness adjustment...", end="\r")
                         seg_string = topology_preserving_thinning(seg_full == 2, min_thickness=1, thin=1)
                         temp_seg_full = np.zeros_like(seg_full)
                         temp_seg_full[seg_string > 0] = 2
                         temp_seg_full[seg_full == 1] = 1
                         seg_full = temp_seg_full
+                    tqdm.write(" " * 40, end="\r")
                     
                     out_fn = out_p / fn.name.replace('.tiff','_pred.tiff')
                     OmeTiffWriter.save(seg_full, out_fn, dim_order="ZYX")

@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from bioio import BioImage
 from bioio.writers import OmeTiffWriter
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 
 def _execute_processing_logic(use_dim_fix, get_channels, src_path_str, out_path_base_str):
     """
@@ -38,14 +38,14 @@ def _execute_processing_logic(use_dim_fix, get_channels, src_path_str, out_path_
 
     print(f"Number of .lif files found: {len(filenames)}")
 
-    for fn in tqdm(filenames, desc= "Processing file progress"):
+    for fn in tqdm(filenames, desc= "Split file progress", position=0):
     
         reader = BioImage(fn)
         scene_list = reader.scenes
     
 
         # loop through all scenes
-        for sname in scene_list:
+        for sname in tqdm(scene_list, desc= "Split scene", leave=False, position=1):
             reader.set_scene(sname)
             # get image data
             img = reader.get_image_data("CZYX", T=0)
@@ -53,8 +53,9 @@ def _execute_processing_logic(use_dim_fix, get_channels, src_path_str, out_path_
             # check if dimension_fix is necessary
             if use_dim_fix:
                 if img.ndim < 4 or img.shape[0] == 0 or img.shape[1] == 0:
-                    print(f"Warning: Image shape for scene {sname} in {fn.name} is not suitable for dimension_fix. Skipping dimension_fix.")
+                    tqdm.write(f"Warning: Image shape for scene {sname} in {fn.name} is not suitable for dimension_fix. Skipping dimension_fix.")
                     im = img[get_channels, :, :, :]
+                    
                 else:
                     img_re = np.zeros_like(img)
                     counter_z = 0
@@ -77,7 +78,7 @@ def _execute_processing_logic(use_dim_fix, get_channels, src_path_str, out_path_
             # save individual multi-channel Tiff files
             out_fn = out_path_3d / f"{fn.stem}_{sname_cleaned}.tiff"
             OmeTiffWriter.save(im, out_fn, dim_order="CZYX")
-            print(f"Saved: {out_fn}")
+            
 
     print("\nImage processing completed!")
 

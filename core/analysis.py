@@ -11,7 +11,7 @@ from vessel_analysis_3d.graph.stats_reporting import report_everything
 
 import ipywidgets as widgets
 from IPython.display import display, clear_output
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 
 def analysis_menu():
     """

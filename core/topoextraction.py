@@ -12,7 +12,7 @@ from gudhi.representations import vector_methods
 import matplotlib.pyplot as plt
 import persim
 from numba import jit, cuda
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 import math
 from IPython.display import display, HTML
 import ipywidgets as widgets
@@ -67,13 +67,13 @@ def extract_vessel_features(featurenames=['betti_PHT', 'betti', 'PI', 'PI_local'
 
 
 def PI_Local(masks, vesselpath, saveroot_npy, saveroot_img, save_npy, generate_images, plot_per_patch, tile_size): 
-    print("Computing Patchwise Persistence Image")
+
     gen_PI = vector_methods.PersistenceImage(bandwidth=1.0, weight=lambda x: x[1]/0.6 if x[1]<0.6 else 1, resolution=[20, 20], im_range=[0,1,0,1])
     
    
     tile_divisor_k, tile_divisor_h, tile_divisor_w = tile_size 
 
-    for f in tqdm(masks, desc= "Processing file"):
+    for f in tqdm(masks, desc= "Computing Patchwise Persistence Image"):
         pds = []
         name = f.split('.')[0]
 
@@ -140,8 +140,8 @@ def PI_Local(masks, vesselpath, saveroot_npy, saveroot_img, save_npy, generate_i
                 plt.close(fig)
 
 def Betti_ending(masks, vesselpath, saveroot_npy, saveroot_img, save_npy, generate_images):
-    print('Computing final Betti curve')
-    for f in tqdm(masks, desc= "Processing file"):
+  
+    for f in tqdm(masks, desc= "Computing final Betti curve"):
         name = f.split('.')[0]
         image = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(vesselpath, f))).astype(np.float32)
 
@@ -175,11 +175,11 @@ def Betti_ending(masks, vesselpath, saveroot_npy, saveroot_img, save_npy, genera
             plt.close(fig)
 
 def Betti_PHT(masks, vesselpath, saveroot_npy, saveroot_img, save_npy, generate_images):
-    print('Computing Betti PHT curve for filtrations')
+    
     directions = [[1,0,0], [0,1,0], [0,0,1], [1,1,0], [1,0,1], [0,1,1], [1,1,1]]
     direction_names = ['x', 'y', 'z', 'xy', 'xz', 'yz', 'xyz']
 
-    for f in tqdm(masks, desc="Processing file"):
+    for f in tqdm(masks, desc="Computing Betti PHT curve for filtrations"):
         bettis = []
         name = f.split('.')[0]
 
@@ -291,9 +291,9 @@ def scan_cuda(image, v):
     return distance_map
 
 def PI_ending(masks, vesselpath, saveroot_npy, saveroot_img, save_npy, generate_images):
-    print("Computing Persistence Image")
+    
     gen_PI = vector_methods.PersistenceImage(bandwidth=1.0, weight=lambda x: x[1]/0.6 if x[1]<0.6 else 1, resolution=[20, 20], im_range=[0,1,0,1])
-    for f in tqdm(masks, desc= "Processing file"):
+    for f in tqdm(masks, desc= "Computing Persistence Image"):
         pds = []
         name = f.split('.')[0]
 

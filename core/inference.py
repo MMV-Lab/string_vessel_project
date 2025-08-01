@@ -35,7 +35,7 @@ from pyrallis.help_formatter import SimpleHelpFormatter
 from pyrallis.parsers import decoding
 from pyrallis.utils import Dataclass, PyrallisException
 from pyrallis.wrappers import DataclassWrapper
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 import gc
 import torch
 
@@ -175,6 +175,7 @@ def parse_adaptor_jpnb(
     parser = ArgumentParser(config_class=config_class, config=config)
     return parser.parse_args(args=[])
 
+
 def create_inference_menu():
     # Text input for YAML config file path
     yaml_path_text = widgets.Text(
@@ -204,10 +205,35 @@ def create_inference_menu():
         style={'description_width': '12%'} 
     )
 
+    # Postprocessing section header
+    postprocessing_header = widgets.Label(
+        value="--- Postprocessing Options ---",
+        style={'font_weight': 'bold'}
+    )
+
+    # Checkboxes for post-processing
+    apply_pericytes_checkbox = widgets.Checkbox(
+        value=True,
+        description="Apply Pericytes Correction",
+        disabled=False
+    )
+    apply_holes_checkbox = widgets.Checkbox(
+        value=True,
+        description="Apply Small Holes Correction",
+        disabled=False
+    )
+    apply_thickness_checkbox = widgets.Checkbox(
+        value=True,
+        description="Apply Thickness Adjustment",
+        disabled=False
+    )
+
     run_button = widgets.Button(description="Run Inference" , button_style='success', )
     output = widgets.Output()
 
-    display(yaml_path_text, ckpt_path_text, path_base_text, run_button, output)
+    display(yaml_path_text, ckpt_path_text, path_base_text, postprocessing_header, 
+            apply_pericytes_checkbox, apply_holes_checkbox, apply_thickness_checkbox,
+            run_button, output)
 
     def on_button_clicked(b):
         with output:
@@ -215,6 +241,10 @@ def create_inference_menu():
             selected_yaml = yaml_path_text.value
             selected_ckpt = ckpt_path_text.value
             selected_path_base = path_base_text.value
+            
+            apply_pericytes = apply_pericytes_checkbox.value
+            apply_holes = apply_holes_checkbox.value
+            apply_thickness = apply_thickness_checkbox.value
 
             try:
                 # Configuration for the model
@@ -239,8 +269,8 @@ def create_inference_menu():
             
                     img = BioImage(fn).get_image_data("CZYX", T=0)
 
-                    out_list = []
-                    for zz in range(img.shape[1]):
+                    out_list = []    
+                    for zz in tqdm(range(img.shape[1]), desc= "Prediction in slice"):
                         im_input = img[:, zz, :, :]
                         seg = executor.process_one_image(im_input)
                         seg_np = np.squeeze(seg)
@@ -249,40 +279,56 @@ def create_inference_menu():
                         out_list.append(seg_np)
                     seg_full = np.stack(out_list, axis=0)
 
+                    # Post-processing steps from Inference_3D.py, controlled by checkboxes
                     # Attempt to remove pericytes by post-processing
-                    seg_2 = remove_small_objects(seg_full == 2, min_size=64)
-                    seg_2_mid = np.logical_xor(seg_2, remove_small_objects(seg_2, min_size=300))
-                    for zz in range(seg_2_mid.shape[0]):
-                        seg_label, num_obj = label(seg_2_mid[zz, :, :], return_num=True)
-                        if num_obj > 0:
-                            stats = regionprops(seg_label)
-                            for ii in range(num_obj):
-                                if stats[ii].eccentricity < 0.88 and stats[ii].solidity > 0.85 and stats[ii].area < 150:
-                                    seg_z = seg_2[zz, :, :]
-                                    seg_z[seg_label == (ii+1)] = 0
-                                    seg_2[zz, :, :] = seg_z
+                    if apply_pericytes:
+                       
+                        seg_2 = remove_small_objects(seg_full == 2, min_size=30)
+                        seg_2_mid = np.logical_xor(seg_2, remove_small_objects(seg_2, min_size=300))
+                                  
+                        for zz in tqdm(range(seg_2_mid.shape[0]), desc= "Perycite remotion in slice"):
+                            seg_label, num_obj = label(seg_2_mid[zz, :, :], return_num=True)
+                            if num_obj > 0:
+                                stats = regionprops(seg_label)
+                                for ii in range(num_obj):
+                                    if stats[ii].eccentricity < 0.88 and stats[ii].solidity > 0.85 and stats[ii].area < 150:
+                                        seg_z = seg_2[zz, :, :]
+                                        seg_z[seg_label == (ii+1)] = 0
+                                        seg_2[zz, :, :] = seg_z
 
-                    seg_full[seg_full == 2] = 1
-                    seg_full[seg_2 > 0] = 2
+                        seg_full[seg_full == 2] = 1
+                        seg_full[seg_2 > 0] = 2
 
                     # Another minor fix: remove small holes due to segmentation errors
-                    hole_size_threshold = 15
-                    seg_1 = remove_small_objects(seg_full==1, min_size=50)
-                    seg_2 = seg_full == 2
-                    for zz in range(seg_full.shape[0]):
-                        s_v = remove_small_holes(seg_1[zz, :, :], area_threshold=hole_size_threshold)
-                        seg_1[zz, :, :] = s_v[:, :]
+                    if apply_holes:
+                        
+                        hole_size_threshold = 15
+                        seg_1_temp = remove_small_objects(seg_full == 1, min_size=50)
+                        seg_2_temp = seg_full == 2
+                                  
+                        for zz in tqdm(range(seg_full.shape[0]), desc= "Holes correction in slice"):
+                            s_v = remove_small_holes(seg_1_temp[zz, :, :], area_threshold=hole_size_threshold)
+                            seg_1_temp[zz, :, :] = s_v[:, :]
 
-                        a_v = remove_small_holes(seg_2[zz, :, :], area_threshold=hole_size_threshold)
-                        seg_2[zz, :, :] = a_v[:, :]
+                            a_v = remove_small_holes(seg_2_temp[zz, :, :], area_threshold=hole_size_threshold)
+                            seg_2_temp[zz, :, :] = a_v[:, :]
+                            
+                        # Combine the corrected classes back into seg_full
+                        seg_full = np.zeros_like(seg_full)
+                        seg_full[seg_1_temp] = 1
+                        seg_full[seg_2_temp] = 2
+
 
                     # Thickness adjustment
-                    seg_string = topology_preserving_thinning(seg_full == 2, min_thickness=1, thin=1)
-                    seg_thin = np.zeros_like(seg_full)
-                    seg_thin[seg_string > 0] = 2
-                    seg_thin[seg_full == 1] = 1
-
-                    out_fn = out_p / fn.name
+                    if apply_thickness:
+                        tqdm.write("Applying thickness adjustment...")
+                        seg_string = topology_preserving_thinning(seg_full == 2, min_thickness=1, thin=1)
+                        temp_seg_full = np.zeros_like(seg_full)
+                        temp_seg_full[seg_string > 0] = 2
+                        temp_seg_full[seg_full == 1] = 1
+                        seg_full = temp_seg_full
+                    
+                    out_fn = out_p / fn.name.replace('.tiff','_pred.tiff')
                     OmeTiffWriter.save(seg_full, out_fn, dim_order="ZYX")
                 print("Inference completed.")
 
@@ -290,4 +336,3 @@ def create_inference_menu():
                 print(f"An error occurred: {e}")
 
     run_button.on_click(on_button_clicked)
-    

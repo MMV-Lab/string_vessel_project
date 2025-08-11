@@ -67,7 +67,7 @@ def extract_vessel_features(featurenames=['betti_PHT', 'betti', 'PI', 'PI_local'
 
 
 def PI_Local(masks, vesselpath, saveroot_npy, saveroot_img, save_npy, generate_images, plot_per_patch, tile_size): 
-
+    
     gen_PI = vector_methods.PersistenceImage(bandwidth=1.0, weight=lambda x: x[1]/0.6 if x[1]<0.6 else 1, resolution=[20, 20], im_range=[0,1,0,1])
     
    

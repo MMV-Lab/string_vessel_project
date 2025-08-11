@@ -33,9 +33,10 @@ data:
         T: 0
         Z: 0
     - module_name: monai.transforms
-      func_name: AddChanneld
+      func_name: EnsureChannelFirstd  
       params:
         keys: ["GT"]
+        channel_dim: "no_channel" 
     - module_name: monai.transforms
       func_name: NormalizeIntensityd
       params:
@@ -92,6 +93,27 @@ model:
       in_channels: 2
       n_classes: 3 # 0 background + 2 classes
       latent_dim: 6
+      kl_clamp: 20.0 # For kl stability and convergence
+      #elbo_class_weights: [1.0, 1.0, 1.9] #class unbalance managment
+      use_fractal_regularization: False # Set to True to enable fractal regularization and then the parametert for this
+      fractal_weight: 0.4  # loss fractal weight.
+      fractal_num_kernels: 10 # Number of kernel used.
+      fractal_mode: "classic" # aproximation type for the FD ("classic" or "entropy").
+      fractal_to_binary: True #binarization for the masks (classes doent matter just the geometry)
+      use_connectivity_regularization : False
+      connectivity_weight : 0.53
+      connectivity_kernel_size : 9 #  3, 5, 7
+      connectivity_ignore_background : True
+      use_gdl_focal_regularization: False
+      gdl_focal_weight: 0.5
+      #gdl_class_weights: [1.0,1.0,2]
+      use_topological_regularization: False # Enable top features
+      topological_weight: 0.001 # Adjust this weight based on the importance of this regularization.
+      topological_dim: 2 # 2 for 2D images, 3 for 3D.
+      topological_connectivity: 8 # 4 or 8 for 2D; 6 or 26 for 3D.
+      topological_inclusion: [] 
+      topological_exclusion: [] 
+      topological_min_thick: 1 # Default value.
 
   criterion:
     module_name: mmv_im2im.utils.elbo_loss 

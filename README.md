@@ -51,7 +51,7 @@ pixel value 0.
 
 ### part 4:
 
-    topological_features.ipynb will extract topologycal features from the segmentation results
+    topological_features.ipynb will extract topological features from the segmentation results
 
 <span style="color:red;"><b>Important Notes:</b></span>
 

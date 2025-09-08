@@ -78,10 +78,19 @@ def PI_Local(masks, vesselpath, saveroot_npy, saveroot_img, save_npy, generate_i
         name = f.split('.')[0]
 
         image = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(vesselpath, f))).astype(np.float32)
+        if not np.any(image):
+            continue
         # Break 3D image into tiles
         k_img_dim, h_img_dim, w_img_dim = image.shape
         
-        # Calculate K, M, N (actual tile dimensions) 
+        # Calculate K, M, N (actual tile dimensions)
+        if  k_img_dim // tile_divisor_k == 0:
+            tile_divisor_k=k_img_dim
+        if  h_img_dim // tile_divisor_h == 0:
+            tile_divisor_h=h_img_dim
+        if   w_img_dim // tile_divisor_w == 0:
+            tile_divisor_w=w_img_dim
+
         K = k_img_dim // tile_divisor_k
         M = h_img_dim // tile_divisor_h
         N = w_img_dim // tile_divisor_w
@@ -184,6 +193,8 @@ def Betti_PHT(masks, vesselpath, saveroot_npy, saveroot_img, save_npy, generate_
         name = f.split('.')[0]
 
         image = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(vesselpath, f))).astype(np.float32)
+        if not np.any(image):
+            continue  
 
         if generate_images:
             fig_pht, ax_pht = plt.subplots(len(directions), 1, figsize=(8, 4 * len(directions)))
@@ -298,6 +309,8 @@ def PI_ending(masks, vesselpath, saveroot_npy, saveroot_img, save_npy, generate_
         name = f.split('.')[0]
 
         image = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(vesselpath, f))).astype(np.float32)
+        if not np.any(image):
+                continue
 
         skeleton = skeletonize(image, method='lee')
         origins = find_one_degrees(skeleton)
@@ -443,19 +456,20 @@ def generate_topological_menu():
         pi_local_checkbox
     ]
 
-    root_path_text = widgets.Text(
-        value='/base/path/to/put/the/output/folder/',
-        placeholder='Base output path',
-        description='Base output path:',
-        disabled=False,
-        layout=Layout(width='auto'),
-        style={'description_width': '12%'}
-    )
-
     vessel_path_text = widgets.Text(
         value='/path/to/the/segmentation/files/',
         placeholder='Enter vessel segmentation path',
         description='Segmentations Path:',
+        disabled=False,
+        layout=Layout(width='auto'),
+        style={'description_width': '12%'}
+    )
+    
+
+    root_path_text = widgets.Text(
+        value='/base/path/to/put/the/output/folder/',
+        placeholder='Base output path',
+        description='Base output path:',
         disabled=False,
         layout=Layout(width='auto'),
         style={'description_width': '12%'}
@@ -612,8 +626,8 @@ def generate_topological_menu():
     feature_box = widgets.VBox([widgets.Label("Select Features:")] + feature_names_checkboxes)
 
     input_paths_box = widgets.VBox([
-        root_path_text,
         vessel_path_text,
+        root_path_text,
         tile_size_input
     ])
 

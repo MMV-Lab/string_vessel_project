@@ -8,7 +8,7 @@ from skimage.morphology import label, remove_small_objects, remove_small_holes
 from vessel_analysis_3d.graph.networkx_from_array import get_networkx_graph_from_array
 from vessel_analysis_3d.graph.core import GraphObj
 from vessel_analysis_3d.graph.stats_reporting import report_everything
-
+import os
 import ipywidgets as widgets
 from IPython.display import display, clear_output
 from tqdm.notebook import tqdm
@@ -115,43 +115,82 @@ def analysis_menu():
                 return
 
             save_name = out_path / Path("data_full_stats.csv")
-
+            
             stats = []
             print(f"{len(filenames)} files found to be analized")
             for fn in tqdm(filenames, desc= "Analysis file progress "):
                
                 
+                try:
+                    fileID = fn.stem
+                    pred = BioImage(fn).get_image_data("ZYX", C=0, T=0)
 
-                fileID = fn.stem
-                pred = BioImage(fn).get_image_data("ZYX", C=0, T=0)
+                    # here, in this demo, we run analysis on string vessel only and on all vessels
+                    # we can also run on normal vessel only (pred == 1)
+                    string_vessel = pred == 2
+                    all_vessel = pred > 0
 
-                # here, in this demo, we run analysis on string vessel only and on all vessels
-                # we can also run on normal vessel only (pred == 1)
-                string_vessel = pred == 2
-                all_vessel = pred > 0
+                    _, num_string = label(string_vessel, connectivity=3, return_num=True)
 
-                _, num_string = label(string_vessel, connectivity=3, return_num=True)
+                    all_skl = skeletonize(all_vessel > 0, method="lee").astype(np.uint8)
+                    all_skl[all_skl > 0] = 1
+                    _, _, _, all_reports = Pipeline3D.process_one_file(all_vessel, all_skl, params)
 
-                all_skl = skeletonize(all_vessel > 0, method="lee").astype(np.uint8)
-                all_skl[all_skl > 0] = 1
-                _, _, _, all_reports = Pipeline3D.process_one_file(all_vessel, all_skl, params)
+                    raw_stats_name = out_path / f"{fileID}_all_vessels_stats.csv"
+                    all_reports[0].to_csv(raw_stats_name, index=False)
 
-                raw_stats_name = out_path / f"{fileID}_all_vessels_stats.csv"
-                all_reports[0].to_csv(raw_stats_name, index=False)
+                    if num_string > 0:
 
-                if num_string > 0:
+                        string_skl = skeletonize(string_vessel > 0, method="lee").astype(np.uint8)
+                        string_skl[string_skl > 0] = 1
 
-                    string_skl = skeletonize(string_vessel > 0, method="lee").astype(np.uint8)
-                    string_skl[string_skl > 0] = 1
+                        # skeleton to graph
+                        networkxGraph = get_networkx_graph_from_array(string_skl)
 
-                    # skeleton to graph
-                    networkxGraph = get_networkx_graph_from_array(string_skl)
+                        # Statistical Analysis
+                        gh = GraphObj(string_vessel, string_skl, networkxGraph, **params)
+                        skl_final = gh.prune_and_analyze(return_final_skel=True)
 
-                    # Statistical Analysis
-                    gh = GraphObj(string_vessel, string_skl, networkxGraph, **params)
-                    skl_final = gh.prune_and_analyze(return_final_skel=True)
+                        if np.count_nonzero(skl_final) < 3:
+                            stats.append(
+                                {
+                                    "filename": fileID,
+                                    "num_string_vessel": 0,
+                                    "average_thickness_string": 0,
+                                    "average_straightness_string": 0,
+                                    "average_length_string": 0,
+                                    "sum_length_string": 0,
+                                    "string_to_all_ratio": 0,
+                                    "average_thickness_all": np.mean(all_reports[0]["diameter"]),
+                                    "average_straightness_all": np.mean(all_reports[0]["straightness"]),
+                                    "average_length_all": np.mean(all_reports[0]["length"]),
+                                    "sum_length_all": np.sum(all_reports[0]["length"]),
+                                    "sum_length_string_to_all_ratio": 0,
 
-                    if np.count_nonzero(skl_final) < 3:
+                                }
+                            )
+                        else:
+                            string_reports = report_everything(gh, "default")
+                            # save the string report
+                            raw_string_stats_name = out_path / f"{fileID}_string_vessels_stats.csv"
+                            string_reports[0].to_csv(raw_string_stats_name, index=False)
+                            stats.append(
+                                {
+                                    "filename": fileID,
+                                    "num_string_vessel": num_string,
+                                    "average_thickness_string": np.mean(string_reports[0]["diameter"]),
+                                    "average_straightness_string": np.mean(string_reports[0]["straightness"]),
+                                    "average_length_string": np.mean(string_reports[0]["length"]),
+                                    "sum_length_string": np.sum(string_reports[0]["length"]),
+                                    "string_to_all_ratio": len(string_reports[0]) / len(all_reports[0]),
+                                    "average_thickness_all": np.mean(all_reports[0]["diameter"]),
+                                    "average_straightness_all": np.mean(all_reports[0]["straightness"]),
+                                    "average_length_all": np.mean(all_reports[0]["length"]),
+                                    "sum_length_all": np.sum(all_reports[0]["length"]),
+                                    "sum_length_string_to_all_ratio": np.sum(string_reports[0]["length"]) / np.sum(all_reports[0]["length"]),
+                                }
+                            )
+                    else:
                         stats.append(
                             {
                                 "filename": fileID,
@@ -159,49 +198,29 @@ def analysis_menu():
                                 "average_thickness_string": 0,
                                 "average_straightness_string": 0,
                                 "average_length_string": 0,
+                                "sum_length_string": 0,
                                 "string_to_all_ratio": 0,
                                 "average_thickness_all": np.mean(all_reports[0]["diameter"]),
                                 "average_straightness_all": np.mean(all_reports[0]["straightness"]),
                                 "average_length_all": np.mean(all_reports[0]["length"]),
+                                "sum_length_all": np.sum(all_reports[0]["length"]),
+                                "sum_length_string_to_all_ratio": 0,
                             }
                         )
-                    else:
-                        string_reports = report_everything(gh, "default")
-                        # save the string report
-                        raw_string_stats_name = out_path / f"{fileID}_string_vessels_stats.csv"
-                        string_reports[0].to_csv(raw_string_stats_name, index=False)
-                        stats.append(
-                            {
-                                "filename": fileID,
-                                "num_string_vessel": num_string,
-                                "average_thickness_string": np.mean(string_reports[0]["diameter"]),
-                                "average_straightness_string": np.mean(string_reports[0]["straightness"]),
-                                "average_length_string": np.mean(string_reports[0]["length"]),
-                                "string_to_all_ratio": len(string_reports[0]) / len(all_reports[0]),
-                                "average_thickness_all": np.mean(all_reports[0]["diameter"]),
-                                "average_straightness_all": np.mean(all_reports[0]["straightness"]),
-                                "average_length_all": np.mean(all_reports[0]["length"]),
-                            }
-                        )
-                else:
-                    stats.append(
-                        {
-                            "filename": fileID,
-                            "num_string_vessel": 0,
-                            "average_thickness_string": 0,
-                            "average_straightness_string": 0,
-                            "average_length_string": 0,
-                            "string_to_all_ratio": 0,
-                            "average_thickness_all": np.mean(all_reports[0]["diameter"]),
-                            "average_straightness_all": np.mean(all_reports[0]["straightness"]),
-                            "average_length_all": np.mean(all_reports[0]["length"]),
-                        }
-                    )
+                except Exception as e:
+                    with open(out_path / Path("Unprocessed_files.txt"), "a") as f:
+                        f.write(f"{fn.name}\n")
+                    
 
             stats_df = pd.DataFrame(stats)
             stats_df.to_csv(save_name, index=False)
             print(f"\nAnalysis complete. Summary saved to: {save_name}")
             print(f"Individual raw statistics saved to: {out_path}")
+            if os.path.exists(out_path / Path("Unprocessed_files.txt")):
+                print("#################################Note#################################")
+                print("Some files could not be processed due format or content errors")
+                print("The name of the unprocessed files are saved in:")
+                print(out_path / Path("Unprocessed_files.txt"))  
 
 
     run_button.on_click(on_button_click)

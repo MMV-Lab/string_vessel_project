@@ -12,6 +12,54 @@ import os
 import ipywidgets as widgets
 from IPython.display import display, clear_output
 from tqdm.notebook import tqdm
+import networkx as nx
+
+def calculate_orientation_and_direction(graph, pixel_dims):
+    """
+    Calculates the inclination angle and direction for each segment of the graph.
+    """
+    segment_stats = []
+    
+    # Reference axes for angle calculation
+    axis_vectors = {
+        'Z_angle': np.array([1, 0, 0]),
+        'Y_angle': np.array([0, 1, 0]),
+        'X_angle': np.array([0, 0, 1])
+    }
+    
+    # Scale factors from pixel dimensions
+    scale_factors = np.array(pixel_dims)
+    
+    for u, v, data in graph.edges(data=True):
+        if 'voxel_coords' in data:
+            segment_coords = np.array(data['voxel_coords'])
+            if len(segment_coords) > 1:
+                # The segment's direction vector is the difference between the last and first point
+                direction_vector = segment_coords[-1] - segment_coords[0]
+                
+                # Apply pixel dimensions to the direction vector
+                scaled_direction_vector = direction_vector * scale_factors
+                
+                # Normalize the scaled direction vector for angle calculation
+                norm_direction = scaled_direction_vector / np.linalg.norm(scaled_direction_vector)
+                
+                # Convert coordinates to a list of standard Python integers for a cleaner string representation
+                start_coords = [int(coord) for coord in segment_coords[0]]
+                end_coords = [int(coord) for coord in segment_coords[-1]]
+                
+                stats_entry = {'segment_id': f'{tuple(start_coords)}-{tuple(end_coords)}'}
+                
+                # Calculate the angle with each axis
+                for axis_name, axis_vec in axis_vectors.items():
+                    # Use the dot product to find the cosine of the angle
+                    dot_product = np.dot(norm_direction, axis_vec)
+                    # Arccosine to get the angle in radians, then convert to degrees
+                    angle_deg = np.degrees(np.arccos(np.clip(dot_product, -1.0, 1.0)))
+                    stats_entry[axis_name] = angle_deg
+                
+                segment_stats.append(stats_entry)
+                
+    return pd.DataFrame(segment_stats)
 
 def analysis_menu():
     """
@@ -26,7 +74,6 @@ def analysis_menu():
         "diaScale": 1,
         "branchingThreshold": 0.25
     }
-    
     
     # Create widgets for each parameter
     pixel_dim_widget = widgets.Text(
@@ -117,16 +164,14 @@ def analysis_menu():
             save_name = out_path / Path("data_full_stats.csv")
             
             stats = []
-            print(f"{len(filenames)} files found to be analized")
+            print(f"{len(filenames)} files found to be analyzed")
             for fn in tqdm(filenames, desc= "Analysis file progress "):
-               
                 
                 try:
                     fileID = fn.stem
                     pred = BioImage(fn).get_image_data("ZYX", C=0, T=0)
-
+                    
                     # here, in this demo, we run analysis on string vessel only and on all vessels
-                    # we can also run on normal vessel only (pred == 1)
                     string_vessel = pred == 2
                     all_vessel = pred > 0
 
@@ -134,21 +179,37 @@ def analysis_menu():
 
                     all_skl = skeletonize(all_vessel > 0, method="lee").astype(np.uint8)
                     all_skl[all_skl > 0] = 1
+                    
+                    # Create the all_vessel graph and add voxel_coords
+                    networkxGraph_all = get_networkx_graph_from_array(all_skl)
+                    for u, v in networkxGraph_all.edges():
+                        networkxGraph_all[u][v]['voxel_coords'] = [u, v]
+                        
                     _, _, _, all_reports = Pipeline3D.process_one_file(all_vessel, all_skl, params)
 
                     raw_stats_name = out_path / f"{fileID}_all_vessels_stats.csv"
                     all_reports[0].to_csv(raw_stats_name, index=False)
 
                     if num_string > 0:
-
                         string_skl = skeletonize(string_vessel > 0, method="lee").astype(np.uint8)
                         string_skl[string_skl > 0] = 1
 
                         # skeleton to graph
-                        networkxGraph = get_networkx_graph_from_array(string_skl)
-
+                        networkxGraph_string = get_networkx_graph_from_array(string_skl)
+                        
+                        # Add 'voxel_coords' to the string vessel graph edges
+                        for u, v in networkxGraph_string.edges():
+                            networkxGraph_string[u][v]['voxel_coords'] = [u, v]
+                        
+                        # orientation calc
+                        orientation_df = calculate_orientation_and_direction(networkxGraph_string, params["pixelDimensions"])
+                        
+                        # Save orientation stats
+                        orientation_stats_name = out_path / f"{fileID}_string_vessels_orientation.csv"
+                        orientation_df.to_csv(orientation_stats_name, index=False)
+                        
                         # Statistical Analysis
-                        gh = GraphObj(string_vessel, string_skl, networkxGraph, **params)
+                        gh = GraphObj(string_vessel, string_skl, networkxGraph_string, **params)
                         skl_final = gh.prune_and_analyze(return_final_skel=True)
 
                         if np.count_nonzero(skl_final) < 3:
@@ -166,12 +227,13 @@ def analysis_menu():
                                     "average_length_all": np.mean(all_reports[0]["length"]),
                                     "sum_length_all": np.sum(all_reports[0]["length"]),
                                     "sum_length_string_to_all_ratio": 0,
-
+                                    "average_Z_angle_string": 0, 
+                                    "average_Y_angle_string": 0,
+                                    "average_X_angle_string": 0,
                                 }
                             )
                         else:
                             string_reports = report_everything(gh, "default")
-                            # save the string report
                             raw_string_stats_name = out_path / f"{fileID}_string_vessels_stats.csv"
                             string_reports[0].to_csv(raw_string_stats_name, index=False)
                             stats.append(
@@ -188,6 +250,9 @@ def analysis_menu():
                                     "average_length_all": np.mean(all_reports[0]["length"]),
                                     "sum_length_all": np.sum(all_reports[0]["length"]),
                                     "sum_length_string_to_all_ratio": np.sum(string_reports[0]["length"]) / np.sum(all_reports[0]["length"]),
+                                    "average_Z_angle_string": np.mean(orientation_df["Z_angle"]), 
+                                    "average_Y_angle_string": np.mean(orientation_df["Y_angle"]),
+                                    "average_X_angle_string": np.mean(orientation_df["X_angle"]),
                                 }
                             )
                     else:
@@ -205,6 +270,9 @@ def analysis_menu():
                                 "average_length_all": np.mean(all_reports[0]["length"]),
                                 "sum_length_all": np.sum(all_reports[0]["length"]),
                                 "sum_length_string_to_all_ratio": 0,
+                                "average_Z_angle_string": 0, 
+                                "average_Y_angle_string": 0,
+                                "average_X_angle_string": 0,
                             }
                         )
                 except Exception as e:
@@ -218,10 +286,9 @@ def analysis_menu():
             print(f"Individual raw statistics saved to: {out_path}")
             if os.path.exists(out_path / Path("Unprocessed_files.txt")):
                 print("#################################Note#################################")
-                print("Some files could not be processed due format or content errors")
+                print("Some files could not be processed due to format or content errors")
                 print("The name of the unprocessed files are saved in:")
                 print(out_path / Path("Unprocessed_files.txt"))  
-
 
     run_button.on_click(on_button_click)
 
@@ -241,4 +308,3 @@ def analysis_menu():
             output_area
         ])
     )
-    

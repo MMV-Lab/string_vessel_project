@@ -13,6 +13,7 @@ import ipywidgets as widgets
 from IPython.display import display, clear_output
 from tqdm.notebook import tqdm
 import networkx as nx
+import bioio_tifffile
 
 def calculate_orientation_and_direction(graph, pixel_dims):
     """
@@ -157,6 +158,7 @@ def analysis_menu():
             out_path.mkdir(parents=True, exist_ok=True)
 
             filenames = sorted(pred_path.glob("*.tiff"))
+            filenames.extend(list(pred_path.glob('*.tif')))
             if not filenames:
                 print(f"No .tiff files found in {pred_path}. Please check the path and file extensions.")
                 return
@@ -169,7 +171,14 @@ def analysis_menu():
                 
                 try:
                     fileID = fn.stem
-                    pred = BioImage(fn).get_image_data("ZYX", C=0, T=0)
+                    try:
+                        pred = BioImage(fn, reader=bioio_tifffile.Reader).get_image_data("ZYX", C=0, T=0)
+                    except Exception as e:
+                        try:
+                            pred = BioImage(fn).get_image_data("ZYX", C=0, T=0)
+                        except Exception as e:
+                            raise ValueError("Error at reading time.")
+                    
                     
                     # here, in this demo, we run analysis on string vessel only and on all vessels
                     string_vessel = pred == 2

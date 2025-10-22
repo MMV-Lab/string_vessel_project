@@ -4,6 +4,7 @@
 import os
 from PIL import Image
 import numpy as np
+from pathlib import Path
 import SimpleITK as sitk
 from skimage.morphology import skeletonize
 from scipy.ndimage import distance_transform_edt as distrans
@@ -26,7 +27,7 @@ def extract_vessel_features(featurenames=['betti_PHT', 'betti', 'PI', 'PI_local'
                             plot_per_patch=False,
                             tile_size=(8,8,8)): 
 
-
+    
     vessel = sorted([f for f in os.listdir(vesselpath)])
     saveroot_npy_base = os.path.join(root,'TDA_out','npy_files')
     saveroot_img_base = os.path.join(root,'TDA_out','graphs')
@@ -41,7 +42,10 @@ def extract_vessel_features(featurenames=['betti_PHT', 'betti', 'PI', 'PI_local'
         os.makedirs(saveroot_img_base)
 
     for v in vessel:
-        name = v.replace('.tiff', '')
+        if '.tiff' in v:
+            name = v.replace('.tiff', '')
+        elif '.tif' in v:
+            name = v.replace('.tif', '')    
         current_npy_folder = os.path.join(saveroot_npy_base, name)
         current_img_folder = os.path.join(saveroot_img_base, name)
 
@@ -55,7 +59,7 @@ def extract_vessel_features(featurenames=['betti_PHT', 'betti', 'PI', 'PI_local'
             current_patch_img_folder = os.path.join(current_img_folder, 'patch_graphs')
             if not os.path.isdir(current_patch_img_folder):
                 os.makedirs(current_patch_img_folder)
-
+    
     if 'betti_PHT' in featurenames:
         Betti_PHT(vessel, vesselpath, saveroot_npy_base, saveroot_img_base, save_npy, generate_images)
     if 'betti' in featurenames:

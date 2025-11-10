@@ -5,6 +5,8 @@ import numpy as np
 from bioio import BioImage
 from bioio.writers import OmeTiffWriter
 from tqdm.notebook import tqdm
+from ipyfilechooser import FileChooser
+from bioio_base.types import PhysicalPixelSizes
 
 def _execute_processing_logic(use_dim_fix, get_channels, src_path_str, out_path_base_str):
     """
@@ -77,7 +79,30 @@ def _execute_processing_logic(use_dim_fix, get_channels, src_path_str, out_path_
 
             # save individual multi-channel Tiff files
             out_fn = out_path_3d / f"{fn.stem}_{sname_cleaned}.tiff"
-            OmeTiffWriter.save(im, out_fn, dim_order="CZYX")
+
+            # adding pixel info
+            pps = getattr(reader, "physical_pixel_sizes", None)
+            if pps is None:
+                voxel_sizes = PhysicalPixelSizes(None,None,None)
+            elif isinstance(pps, tuple):
+                voxel_sizes = pps  # tuple like (Z, Y, X)
+            else:
+                voxel_sizes = (getattr(pps, "Z", None),
+                               getattr(pps, "Y", None),
+                               getattr(pps, "X", None))
+                voxel_sizes = PhysicalPixelSizes(voxel_sizes[0],voxel_sizes[1],voxel_sizes[2])
+
+            voxel_sizes = [1.0 if v is None else float(v) for v in voxel_sizes]
+            voxel_sizes = PhysicalPixelSizes(voxel_sizes[0],voxel_sizes[1],voxel_sizes[2])
+     
+     
+            OmeTiffWriter.save(
+                data=im,
+                uri=out_fn,
+                dim_order="CZYX",
+                physical_pixel_sizes=voxel_sizes,
+                physical_pixel_units="micron", 
+            )
             
 
     print("\nImage processing completed!")
@@ -103,22 +128,20 @@ def run_image_processing_menu():
         disabled=False,
         continuous_update=False
     )
-
-    src_path_widget = widgets.Text(
-        value='/path/to/string_vessel_data/',
-        description='LIF files path:',
-        disabled=False,
-        continuous_update=False,
-        layout=widgets.Layout(width='70%' , description_width='initial')
+    src_path_widget = FileChooser(
+        Path.cwd().as_posix(), 
+        title='Select LIF files folder',
+        select_default=False 
     )
+    src_path_widget.show_only_dirs = True 
+    
 
-    out_path_base_widget = widgets.Text(
-        value='/path/to/output_folder/',
-        description='Output path:',
-        disabled=False,
-        continuous_update=False,
-        layout=widgets.Layout(width='70%' , description_width='initial')
+    out_path_base_widget = FileChooser(
+        Path.cwd().as_posix(), 
+        title='Select Output Path',
+        select_default=False 
     )
+    out_path_base_widget.show_only_dirs = True
 
     run_button = widgets.Button(
         description='Run Processing',
@@ -138,8 +161,12 @@ def run_image_processing_menu():
             try:
                 use_dim_fix = use_dim_fix_widget.value
                 get_channels_str = get_channels_text_widget.value
-                src_path_str = src_path_widget.value
-                out_path_base_str = out_path_base_widget.value
+                src_path_str = src_path_widget.selected
+                out_path_base_str = out_path_base_widget.selected
+
+                if not src_path_str or not out_path_base_str:
+                    raise ValueError("Please select and input/output file.")
+                    return
 
                 try:
                     get_channels = [int(ch.strip()) for ch in get_channels_str.split(',') if ch.strip()]

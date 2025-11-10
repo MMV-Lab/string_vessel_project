@@ -1,5 +1,11 @@
+napari[all]
+napari-vedo-bridge
 ipywidgets
+ipyfilechooser
 cripser
 simpleitk
 gudhi==3.7.0
 persim==0.3.8
+trimesh
+vedo
+

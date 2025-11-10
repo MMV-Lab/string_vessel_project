@@ -1,0 +1,13 @@
+napari[all]
+napari-vedo-bridge
+jupyterlab
+bioio
+bioio-tifffile
+bioio-ome-tiff 
+bioio-ome-zarr
+ipywidgets
+simpleitk
+ipyfilechooser
+trimesh
+vedo
+

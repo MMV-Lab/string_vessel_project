@@ -14,6 +14,8 @@ from IPython.display import display, clear_output
 from tqdm.notebook import tqdm
 import networkx as nx
 import bioio_tifffile
+from ipyfilechooser import FileChooser
+from bioio_base.types import PhysicalPixelSizes
 
 def calculate_orientation_and_direction(graph, pixel_dims):
     """
@@ -79,10 +81,18 @@ def analysis_menu():
     # Create widgets for each parameter
     pixel_dim_widget = widgets.Text(
         value=default_params["pixelDimensions"],
-        description='Pixel Dimensions:',
+        description='Pixel Dimensions(Z,Y,X):',
         layout=widgets.Layout(description_width='initial'),
-        style={'description_width': '40%'}
+        style={'description_width': '60%'}
     )
+
+    meta_pixel_dim_widget = widgets.Checkbox(
+        value=True,
+        description='Use pixel dimensions from image metadata',
+        indent=True,
+         style={'description_width': '0%'}
+    )
+
     pruning_scale_widget = widgets.FloatText(
         value=default_params["pruningScale"],
         description='Pruning Scale:',
@@ -107,19 +117,22 @@ def analysis_menu():
     )
 
     # Path widgets
-    default_pred_path = "/path/to/segmentation/results"
-    default_out_path = "/path/to/save/all/stats"
 
-    pred_path_widget = widgets.Text(
-        value=default_pred_path,
-        description='Input Path:',
-        layout=widgets.Layout( width='70%' , description_width='initial')
+    pred_path_widget = FileChooser(
+        Path.cwd().as_posix(), 
+        title='Select the model_predictions folder path',
+        select_default=False 
     )
-    out_path_widget = widgets.Text(
-        value=default_out_path,
-        description='Output Path:',
-        layout=widgets.Layout( width='70%', description_width='initial')
+    pred_path_widget.show_only_dirs = True 
+    pred_path_widget.layout = widgets.Layout(width='70%')
+
+    out_path_widget = FileChooser(
+        Path.cwd().as_posix(), 
+        title='Select the root for the output folder files',
+        select_default=False 
     )
+    out_path_widget.show_only_dirs = True
+    out_path_widget.layout = widgets.Layout(width='70%')
 
     run_button = widgets.Button(
         description="Run Analysis",
@@ -148,8 +161,15 @@ def analysis_menu():
             for key, value in params.items():
                 print(f"  {key}: {value}")
 
+            pred_path_str = pred_path_widget.selected
+            out_path_str = out_path_widget.selected 
+    
+            if not pred_path_str or not out_path_str:
+                raise ValueError("Please select input/output folders")
+                return
+
             pred_path = Path(pred_path_widget.value)
-            out_path = Path(out_path_widget.value)
+            out_path = Path(out_path_widget.value + '/stats')
 
             print(f"  Segmentation Results Path: {pred_path}")
             print(f"  Save Statistics Path: {out_path}")
@@ -160,7 +180,7 @@ def analysis_menu():
             filenames = sorted(pred_path.glob("*.tiff"))
             filenames.extend(list(pred_path.glob('*.tif')))
             if not filenames:
-                print(f"No .tiff files found in {pred_path}. Please check the path and file extensions.")
+                raise ValueError(f"No .tiff/.tif files found in {pred_path}. Please check the path and file extensions.")
                 return
 
             save_name = out_path / Path("data_full_stats.csv")
@@ -176,8 +196,29 @@ def analysis_menu():
                     except Exception as e:
                         try:
                             pred = BioImage(fn).get_image_data("ZYX", C=0, T=0)
+                            
                         except Exception as e:
                             raise ValueError("Error at reading time.")
+
+                    
+                    if meta_pixel_dim_widget.value:
+                        try:
+                            pps = getattr(BioImage(fn), "physical_pixel_sizes", None)
+                            if pps is None:
+                                voxel_sizes = PhysicalPixelSizes(None,None,None)
+                            elif isinstance(pps, tuple):
+                                voxel_sizes = pps  # tuple like (Z, Y, X)
+                            else:
+                                voxel_sizes = (getattr(pps, "Z", None),
+                                            getattr(pps, "Y", None),
+                                            getattr(pps, "X", None))
+                                voxel_sizes = PhysicalPixelSizes(voxel_sizes[0],voxel_sizes[1],voxel_sizes[2])
+
+                            voxel_sizes = [1.0 if v is None else float(v) for v in voxel_sizes]
+
+                            params["pixelDimensions"] = list(voxel_sizes)
+                        except Exception as e:
+                            params["pixelDimensions"] = [float(d.strip()) for d in pixel_dim_widget.value.split(',')]                    
                     
                     
                     # here, in this demo, we run analysis on string vessel only and on all vessels
@@ -198,6 +239,16 @@ def analysis_menu():
 
                     raw_stats_name = out_path / f"{fileID}_all_vessels_stats.csv"
                     all_reports[0].to_csv(raw_stats_name, index=False)
+
+                    # Collect physical pixel dimensions for later output
+                    if pred.ndim == 3:
+                        num_slices, height, width = pred.shape
+                    elif pred.ndim == 2:
+                        num_slices = 1
+                        height, width = pred.shape
+
+                    z_dim, y_dim, x_dim = params["pixelDimensions"]
+                    volume = num_slices * z_dim * height * y_dim * width * x_dim
 
                     if num_string > 0:
                         string_skl = skeletonize(string_vessel > 0, method="lee").astype(np.uint8)
@@ -239,6 +290,13 @@ def analysis_menu():
                                     "average_Z_angle_string": 0, 
                                     "average_Y_angle_string": 0,
                                     "average_X_angle_string": 0,
+                                    "pixel_size_Z": z_dim,
+                                    "pixel_size_Y": y_dim,
+                                    "pixel_size_X": x_dim,
+                                    "num_slices": num_slices,
+                                    "height": height,
+                                    "width": width,
+                                    "volume": volume,
                                 }
                             )
                         else:
@@ -262,6 +320,13 @@ def analysis_menu():
                                     "average_Z_angle_string": np.mean(orientation_df["Z_angle"]), 
                                     "average_Y_angle_string": np.mean(orientation_df["Y_angle"]),
                                     "average_X_angle_string": np.mean(orientation_df["X_angle"]),
+                                    "pixel_size_Z": z_dim,
+                                    "pixel_size_Y": y_dim,
+                                    "pixel_size_X": x_dim,
+                                    "num_slices": num_slices,
+                                    "height": height,
+                                    "width": width,
+                                    "volume": volume,
                                 }
                             )
                     else:
@@ -282,8 +347,17 @@ def analysis_menu():
                                 "average_Z_angle_string": 0, 
                                 "average_Y_angle_string": 0,
                                 "average_X_angle_string": 0,
+                                "pixel_size_Z": z_dim,
+                                "pixel_size_Y": y_dim,
+                                "pixel_size_X": x_dim,
+                                "num_slices": num_slices,
+                                "height": height,
+                                "width": width,
+                                "volume": volume,
                             }
                         )
+                    with open(out_path / Path("Resume_process_files.txt"), "a") as f:
+                        f.write(f"{fn.name}, used_pixel_dim: {params['pixelDimensions']}\n")
                 except Exception as e:
                     with open(out_path / Path("Unprocessed_files.txt"), "a") as f:
                         f.write(f"{fn.name}\n")
@@ -291,8 +365,11 @@ def analysis_menu():
 
             stats_df = pd.DataFrame(stats)
             stats_df.to_csv(save_name, index=False)
-            print(f"\nAnalysis complete. Summary saved to: {save_name}")
+            print(f"\n###################### Analysis complete ######################")
+            print(f"Summary saved to: {save_name}")
             print(f"Individual raw statistics saved to: {out_path}")
+            print("The resume of the pixel dimension used per image during the analysis is saved in:")
+            print(out_path / Path("Resume_process_files.txt")) 
             if os.path.exists(out_path / Path("Unprocessed_files.txt")):
                 print("#################################Note#################################")
                 print("Some files could not be processed due to format or content errors")
@@ -306,6 +383,7 @@ def analysis_menu():
         widgets.VBox([
             widgets.HTML("<b>Vessel Analysis Parameters</b>"),
             pixel_dim_widget,
+            meta_pixel_dim_widget,
             pruning_scale_widget,
             length_limit_widget,
             dia_scale_widget,

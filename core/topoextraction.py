@@ -18,6 +18,19 @@ import math
 from IPython.display import display, HTML
 import ipywidgets as widgets
 from ipywidgets import Layout
+from ipyfilechooser import FileChooser
+
+def ensure_3d(image_array):
+    """
+    Checks if the array is 2D and converts it to a 3D array (1, H, W) if necessary.
+    Assumes image_array is a NumPy array.
+    """
+    if image_array.ndim == 2:
+        return image_array[np.newaxis, :, :]
+    elif image_array.ndim == 3:
+        return image_array
+    else:
+        raise ValueError(f"Image has unexpected dimensions: {image_array.ndim}. Expected (Y,X) or (Z,Y,X).")
 
 def extract_vessel_features(featurenames=['betti_PHT', 'betti', 'PI', 'PI_local'],
                             root='/root/path/to/output/',
@@ -82,6 +95,8 @@ def PI_Local(masks, vesselpath, saveroot_npy, saveroot_img, save_npy, generate_i
         name = f.split('.')[0]
 
         image = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(vesselpath, f))).astype(np.float32)
+        image = ensure_3d(image)
+
         if not np.any(image):
             continue
         # Break 3D image into tiles
@@ -157,6 +172,7 @@ def Betti_ending(masks, vesselpath, saveroot_npy, saveroot_img, save_npy, genera
     for f in tqdm(masks, desc= "Computing final Betti curve"):
         name = f.split('.')[0]
         image = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(vesselpath, f))).astype(np.float32)
+        image = ensure_3d(image)
 
         skeleton = skeletonize(image, method='lee')
         origins = find_one_degrees(skeleton)
@@ -197,6 +213,8 @@ def Betti_PHT(masks, vesselpath, saveroot_npy, saveroot_img, save_npy, generate_
         name = f.split('.')[0]
 
         image = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(vesselpath, f))).astype(np.float32)
+        image = ensure_3d(image)
+
         if not np.any(image):
             continue  
 
@@ -313,6 +331,8 @@ def PI_ending(masks, vesselpath, saveroot_npy, saveroot_img, save_npy, generate_
         name = f.split('.')[0]
 
         image = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(vesselpath, f))).astype(np.float32)
+        image = ensure_3d(image)
+        
         if not np.any(image):
                 continue
 
@@ -460,24 +480,22 @@ def generate_topological_menu():
         pi_local_checkbox
     ]
 
-    vessel_path_text = widgets.Text(
-        value='/path/to/the/segmentation/files/',
-        placeholder='Enter vessel segmentation path',
-        description='Segmentations Path:',
-        disabled=False,
-        layout=Layout(width='auto'),
-        style={'description_width': '12%'}
+    vessel_path_widget = FileChooser(
+        Path.cwd().as_posix(), 
+        title='Select Path to the model_preditions folder',
+        select_default=False 
     )
+    vessel_path_widget.show_only_dirs = True 
+    vessel_path_widget.layout = widgets.Layout(width='80%')
     
 
-    root_path_text = widgets.Text(
-        value='/base/path/to/put/the/output/folder/',
-        placeholder='Base output path',
-        description='Base output path:',
-        disabled=False,
-        layout=Layout(width='auto'),
-        style={'description_width': '12%'}
+    root_path_widget = FileChooser(
+        Path.cwd().as_posix(), 
+        title='Select the root path for the output folder',
+        select_default=False 
     )
+    root_path_widget.show_only_dirs = True
+    root_path_widget.layout = widgets.Layout(width='80%')
 
 
 
@@ -582,11 +600,18 @@ def generate_topological_menu():
     def on_run_button_clicked(b):
         with output_console:
             output_console.clear_output()
+            
+
+            root_val = root_path_widget.selected
+            vessel_val = vessel_path_widget.selected
+        
+            if not root_val or not vessel_val:
+                raise ValueError("Select input/ouput folders")
+                return
 
             selected_features = [cb.description for cb in feature_names_checkboxes if cb.value]
 
-            root_val = root_path_text.value
-            vessel_val = vessel_path_text.value
+    
             save_npy_val = save_npy_checkbox.value
             generate_images_val = generate_images_checkbox.value
             plot_per_patch_val = plot_per_patch_checkbox.value
@@ -630,8 +655,8 @@ def generate_topological_menu():
     feature_box = widgets.VBox([widgets.Label("Select Features:")] + feature_names_checkboxes)
 
     input_paths_box = widgets.VBox([
-        vessel_path_text,
-        root_path_text,
+        vessel_path_widget, 
+        root_path_widget,
         tile_size_input
     ])
 

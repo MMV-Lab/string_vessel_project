@@ -1,0 +1,76 @@
+
+mode: uncertainty_map # This new mode indicate the uncertainity extraction parameters for the extraction in the  pred_slice2vol: section of this file.
+
+data:
+  inference_input:
+    dir: /path/to/the/input/dir
+    data_type: .tiff,.tif
+    reader_params:
+      dimension_order_out: "CZYX"
+      T: 0
+  inference_output:
+    path:  /path/to/the/output/dir
+  preprocess:
+    # # Padding smaller images               
+    # - module_name: monai.transforms
+    #   func_name: SpatialPad
+    #   params:
+    #     spatial_size: [0,300,300] 
+    #     mode: "constant"
+    - module_name: monai.transforms
+      func_name: NormalizeIntensity
+      params:
+        channel_wise: True
+  # This will apply slice by slice independent of the volume postpross generate_classmap will extract segmentation for logits 
+  postprocess:
+    - module_name: mmv_im2im.postprocessing.basic_collection
+      func_name: generate_classmap
+    # # Delete the padding used fro the prediction of smaller images
+    # - module_name: monai.transforms
+    #   func_name: CenterSpatialCrop
+    #   params:
+    #     roi_size: [0,300,300]
+
+#Probabilistic model configuration
+model:
+  framework: ProbUnet
+  net:
+    module_name: mmv_im2im.models.nets.ProbUnet
+    func_name: ProbabilisticUNet
+    params:
+      in_channels: 2
+      n_classes: 3 # 0 background + 1 class (vessel)
+      latent_dim: 5 #5 Top/bigret  6 prob
+      model_type: 2D
+    # Parameter related to the uncertainty map generator and volumetric prediction slice by slice.
+    pred_slice2vol:
+      uncertainity_map: False  # True generate volume segmentation + uncertainity map / False : Just volume segmentation.
+      multi_pred_mode: single # Prediction mode:  single -> Normal way  max/var/mean -> Take advantage of the n_samples and apply the operation to generate a final prediction.  
+      max_proj: True #Make Prediction over the max projection on chanels
+
+      # Options for volumes postproces (changes are not reflected in the uncertainity map just in the predictions).
+      n_class_correction: 3
+      pixel_dim: [1,1,1] # Physical pixel sizes (Z,Y,X) to take into account 'auto' -> try to take from the metadata 
+      remove_object_size : [50,30]  # Removes small, isolated regions in the segmentation output. It requires the [minimum size] in pixels an object must have to be kept. 
+      hole_size_threshold: [85,90] # Filling holes within segmented objects. It requires the [maximum area] in pixels a hole must have to be filled. 
+      min_thickness_list: [1000,2] # Rreduce the thickness of the objects, to a minimal [pixel size] while ensuring that the connectivity and general shape of the original object are maintained. 
+      perycites_correction: True
+      
+      # Options for uncertainty map
+      n_samples: 1 # Samples taken for the uncertainty computing and multiprediction option 
+      # compute_mode: mutual_inf # Type of uncertainty computation variance /mutual_inf(bayesian model entropy)/entropy(total epistemic+model)/prob_inv(1-prob).
+      # pertubations: ['gauss_noise','impulse_noise','speckle_noise','color_jitter','shift','rotation','pixel_dropout'] # Pertubations used for a pixel Monte Carlo Dropout (MCDO).  
+      # estabilizer: True # If sets true apply sqrt to adjust values in range of 0.0x 
+      # relative_MI: True   # If True -> Relative  in [0,1] range. If False -> Absolute theorical in range  [0,ln(c)] c=number of classes.
+      # var_reductor: True  # If true take min uncertainty per class. If False generate uncertainity map per class.
+      # trunc: 4 # Number of digits to take into accoun after the float point for the uncertainity_map (trunc = 4 -> 0.xxxx) deafult 4 if you want keep the whole float representation set as False.
+      # threshold: 0.5 # Threshold for the uncertainty map  Uncer_map < threshold = 0  (turn 0 every value under de threshold). 
+      # border_correction: [2,1] # Number of pixels [x,y] -> [top/dowm,left/right] to take into acount in the border correction.
+  checkpoint:  /path/to/the/ckpt/file/with/model/weights
+  model_extra:
+    cpu_only: False
+trainer:
+  verbose: True
+  params:
+    gpus: 1
+    precision: 32

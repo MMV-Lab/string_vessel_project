@@ -20,12 +20,10 @@ from skimage.morphology import remove_small_objects, remove_small_holes
 from skimage.measure import label, regionprops
 from core.utils import topology_preserving_thinning
 from dataclasses import dataclass
-from pathlib import Path
 from pyrallis import field
 import argparse
 import dataclasses
 import sys
-import warnings
 from argparse import HelpFormatter, Namespace
 from collections import defaultdict
 from logging import getLogger
@@ -438,6 +436,8 @@ def create_inference_menu():
                 cfg.model.net['pred_slice2vol']['max_proj'] = apply_max_proj
                 cfg.model.net['pred_slice2vol']['remove_object_size'] = remove_objects_sizes
                 cfg.model.net['pred_slice2vol']['hole_size_threshold'] = hole_size_thresholds
+                if hole_size_thresholds:
+                    cfg.model.net['pred_slice2vol']['sv'] = True    
                 cfg.model.net['pred_slice2vol']['min_thickness_list'] = min_thickness_list_values
                 cfg.model.net['pred_slice2vol']['perycites_correction'] = apply_pericytes_checkbox.value    
                 cfg.model.checkpoint = Path(selected_ckpt)
@@ -450,7 +450,7 @@ def create_inference_menu():
                 #generate inference class
                 exe = MapExtractor(cfg)
                 exe.run_inference()
-                print("########################Predictions Finish#############################")
+                print("########################Predictions Ready#############################")
             except Exception as e:
                 print(f"An error occurred: {e}")
     run_button.on_click(on_button_clicked)

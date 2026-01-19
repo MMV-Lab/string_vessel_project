@@ -71,7 +71,7 @@ def analysis_menu():
     """
     # Default parameters
     default_params = {
-        "pixelDimensions": "1.0, 1.0, 1.0", # Stored as string for Text widget
+        "pixelDimensions": "1.0, 1.0, 1.0", 
         "pruningScale": 1,
         "lengthLimit": 1,
         "diaScale": 1,
@@ -117,7 +117,6 @@ def analysis_menu():
     )
 
     # Path widgets
-
     pred_path_widget = FileChooser(
         Path.cwd().as_posix(), 
         title='Select the model_predictions folder path',
@@ -196,10 +195,8 @@ def analysis_menu():
                     except Exception as e:
                         try:
                             pred = BioImage(fn).get_image_data("ZYX", C=0, T=0)
-                            
                         except Exception as e:
                             raise ValueError("Error at reading time.")
-
                     
                     if meta_pixel_dim_widget.value:
                         try:
@@ -221,16 +218,15 @@ def analysis_menu():
                             params["pixelDimensions"] = [float(d.strip()) for d in pixel_dim_widget.value.split(',')]                    
                     
                     
-                    # here, in this demo, we run analysis on string vessel only and on all vessels
                     string_vessel = pred == 2
                     all_vessel = pred > 0
+                    normal_vessel = np.logical_and(all_vessel, np.logical_not(string_vessel))
 
                     _, num_string = label(string_vessel, connectivity=3, return_num=True)
 
                     all_skl = skeletonize(all_vessel > 0, method="lee").astype(np.uint8)
                     all_skl[all_skl > 0] = 1
                     
-                    # Create the all_vessel graph and add voxel_coords
                     networkxGraph_all = get_networkx_graph_from_array(all_skl)
                     for u, v in networkxGraph_all.edges():
                         networkxGraph_all[u][v]['voxel_coords'] = [u, v]
@@ -239,8 +235,6 @@ def analysis_menu():
 
                     raw_stats_name = out_path / f"{fileID}_all_vessels_stats.csv"
                     all_reports[0].to_csv(raw_stats_name, index=False)
-
-                    # Collect physical pixel dimensions for later output
                     if pred.ndim == 3:
                         num_slices, height, width = pred.shape
                     elif pred.ndim == 2:
@@ -250,59 +244,75 @@ def analysis_menu():
                     z_dim, y_dim, x_dim = params["pixelDimensions"]
                     volume = num_slices * z_dim * height * y_dim * width * x_dim
 
-                    if num_string > 0:
+                    if num_string > 0:    
                         string_skl = skeletonize(string_vessel > 0, method="lee").astype(np.uint8)
                         string_skl[string_skl > 0] = 1
 
-                        # skeleton to graph
                         networkxGraph_string = get_networkx_graph_from_array(string_skl)
                         
-                        # Add 'voxel_coords' to the string vessel graph edges
                         for u, v in networkxGraph_string.edges():
                             networkxGraph_string[u][v]['voxel_coords'] = [u, v]
                         
-                        # orientation calc
+                        # Orientation String
                         orientation_df = calculate_orientation_and_direction(networkxGraph_string, params["pixelDimensions"])
-                        
-                        # Save orientation stats
                         orientation_stats_name = out_path / f"{fileID}_string_vessels_orientation.csv"
                         orientation_df.to_csv(orientation_stats_name, index=False)
                         
-                        # Statistical Analysis
+                        # Stats String
                         gh = GraphObj(string_vessel, string_skl, networkxGraph_string, **params)
                         skl_final = gh.prune_and_analyze(return_final_skel=True)
-
+                        normal_skl = skeletonize(normal_vessel > 0, method="lee").astype(np.uint8)
+                        normal_skl[normal_skl > 0] = 1
+                        
+                        networkxGraph_normal = get_networkx_graph_from_array(normal_skl)
+                        
+                        for u, v in networkxGraph_normal.edges():
+                            networkxGraph_normal[u][v]['voxel_coords'] = [u, v]
+                        
+                        orientation_normal_df = calculate_orientation_and_direction(networkxGraph_normal, params["pixelDimensions"])
+                        orientation_normal_stats_name = out_path / f"{fileID}_normal_vessels_orientation.csv"
+                        orientation_normal_df.to_csv(orientation_normal_stats_name, index=False)
+                        
+                        # Stats Normal
+                        gh_normal = GraphObj(normal_vessel, normal_skl, networkxGraph_normal, **params)
+                        skl_normal_final = gh_normal.prune_and_analyze(return_final_skel=True)
+                        
                         if np.count_nonzero(skl_final) < 3:
                             stats.append(
                                 {
                                     "filename": fileID,
                                     "num_string_vessel": 0,
-                                    "average_thickness_string": 0,
-                                    "average_straightness_string": 0,
-                                    "average_length_string": 0,
-                                    "sum_length_string": 0,
+                                    # String stats vacías
+                                    "average_thickness_string": 0, "average_straightness_string": 0,
+                                    "average_length_string": 0, "sum_length_string": 0,
                                     "string_to_all_ratio": 0,
+                                    # All stats
                                     "average_thickness_all": np.mean(all_reports[0]["diameter"]),
                                     "average_straightness_all": np.mean(all_reports[0]["straightness"]),
                                     "average_length_all": np.mean(all_reports[0]["length"]),
                                     "sum_length_all": np.sum(all_reports[0]["length"]),
                                     "sum_length_string_to_all_ratio": 0,
-                                    "average_Z_angle_string": 0, 
-                                    "average_Y_angle_string": 0,
-                                    "average_X_angle_string": 0,
-                                    "pixel_size_Z": z_dim,
-                                    "pixel_size_Y": y_dim,
-                                    "pixel_size_X": x_dim,
-                                    "num_slices": num_slices,
-                                    "height": height,
-                                    "width": width,
-                                    "volume": volume,
+                                    # Normal stats
+                                    "average_thickness_normal": np.mean(all_reports[0]["diameter"]),
+                                    "average_straightness_normal": np.mean(all_reports[0]["straightness"]),
+                                    "average_length_normal": np.mean(all_reports[0]["length"]),
+                                    "sum_length_normal": np.sum(all_reports[0]["length"]),
+                                    # Orientations String
+                                    "average_Z_angle_string": 0, "average_Y_angle_string": 0, "average_X_angle_string": 0,
+                                    "average_Z_angle_normal": 0, "average_Y_angle_normal": 0, "average_X_angle_normal": 0,
+                                    # Dims
+                                    "pixel_size_Z": z_dim, "pixel_size_Y": y_dim, "pixel_size_X": x_dim,
+                                    "num_slices": num_slices, "height": height, "width": width, "volume": volume,
                                 }
                             )
                         else:
                             string_reports = report_everything(gh, "default")
                             raw_string_stats_name = out_path / f"{fileID}_string_vessels_stats.csv"
                             string_reports[0].to_csv(raw_string_stats_name, index=False)
+                            normal_reports = report_everything(gh_normal, "default")
+                            raw_normal_stats_name = out_path / f"{fileID}_normal_vessels_stats.csv"
+                            normal_reports[0].to_csv(raw_normal_stats_name, index=False)
+
                             stats.append(
                                 {
                                     "filename": fileID,
@@ -317,9 +327,17 @@ def analysis_menu():
                                     "average_length_all": np.mean(all_reports[0]["length"]),
                                     "sum_length_all": np.sum(all_reports[0]["length"]),
                                     "sum_length_string_to_all_ratio": np.sum(string_reports[0]["length"]) / np.sum(all_reports[0]["length"]),
+                                    "average_thickness_normal": np.mean(normal_reports[0]["diameter"]),
+                                    "average_straightness_normal": np.mean(normal_reports[0]["straightness"]),
+                                    "average_length_normal": np.mean(normal_reports[0]["length"]),
+                                    "sum_length_normal": np.sum(normal_reports[0]["length"]),
                                     "average_Z_angle_string": np.mean(orientation_df["Z_angle"]), 
                                     "average_Y_angle_string": np.mean(orientation_df["Y_angle"]),
                                     "average_X_angle_string": np.mean(orientation_df["X_angle"]),
+                                    "average_Z_angle_normal": np.mean(orientation_normal_df["Z_angle"]),
+                                    "average_Y_angle_normal": np.mean(orientation_normal_df["Y_angle"]),
+                                    "average_X_angle_normal": np.mean(orientation_normal_df["X_angle"]),
+                                    # Metadata
                                     "pixel_size_Z": z_dim,
                                     "pixel_size_Y": y_dim,
                                     "pixel_size_X": x_dim,
@@ -344,9 +362,16 @@ def analysis_menu():
                                 "average_length_all": np.mean(all_reports[0]["length"]),
                                 "sum_length_all": np.sum(all_reports[0]["length"]),
                                 "sum_length_string_to_all_ratio": 0,
+                                "average_thickness_normal": np.mean(all_reports[0]["diameter"]),
+                                "average_straightness_normal": np.mean(all_reports[0]["straightness"]),
+                                "average_length_normal": np.mean(all_reports[0]["length"]),
+                                "sum_length_normal": np.sum(all_reports[0]["length"]),
                                 "average_Z_angle_string": 0, 
                                 "average_Y_angle_string": 0,
                                 "average_X_angle_string": 0,
+                                "average_Z_angle_normal": 0,
+                                "average_Y_angle_normal": 0,
+                                "average_X_angle_normal": 0,
                                 "pixel_size_Z": z_dim,
                                 "pixel_size_Y": y_dim,
                                 "pixel_size_X": x_dim,

@@ -342,7 +342,7 @@ def add_missing_files(files_prediction,anotators_files,selected_gt):
                 OmeTiffWriter.save(data=zero_pred, uri=save_path, dim_order="ZYX")
 
 
-def evaluation_metrics(anotators_files,selected_predictions,files_prediction,output_path,selected_gt,save_mask,dilatation,n_pixels,kernel_shape, eval_class):
+def evaluation_metrics(anotators_files,selected_predictions,files_prediction,output_path,selected_gt,save_mask,dilatation,n_pixels,kernel_shape, eval_class, staple_threshold=0.5):
 
     if save_mask: 
         (selected_predictions.parent / 'Generated_masks').mkdir(parents=True, exist_ok=True)
@@ -409,7 +409,7 @@ def evaluation_metrics(anotators_files,selected_predictions,files_prediction,out
             staple_filter = sitk.STAPLEImageFilter()
             staple_filter.SetMaximumIterations (100)
             consensus = staple_filter.Execute([sitk.GetImageFromArray(arr) for arr in annotations])
-            staple_mask = sitk.GetArrayFromImage(consensus > 0.5).astype(np.uint8) 
+            staple_mask = sitk.GetArrayFromImage(consensus > staple_threshold).astype(np.uint8) 
             annotations.extend([union, intersection, staple_mask])
             all_sensitivity.append(list(staple_filter.GetSensitivity())) 
             all_specificity.append(list(staple_filter.GetSpecificity()))
@@ -698,6 +698,18 @@ def create_evaluation_menu():
         style={'description_width': 'initial'},
         layout=widgets.Layout(width='150px')
     )
+
+    staple_threshold_widget = widgets.BoundedFloatText(
+        value=0.5,
+        min=0.0,
+        max=1.0,
+        step=0.01,
+        description='STAPLE Threshold:',
+        disabled=False,
+        style={'description_width': 'initial'},
+        layout=widgets.Layout(width='200px', display='none') # Oculto por defecto
+    )
+
     predictions_path_widget.show_only_dirs = True 
     predictions_path_widget.layout = widgets.Layout(width='80%')
 
@@ -735,9 +747,22 @@ def create_evaluation_menu():
         else:
             dilation_options_box.layout.display = 'none'
 
+    def check_gt_subfolders(chooser):
+        if chooser.selected:
+            path = Path(chooser.selected)
+            if path.exists():
+                # Contamos cuántas subcarpetas (anotadores) hay
+                subdirs = [d for d in path.iterdir() if d.is_dir()]
+                if len(subdirs) > 2:
+                    staple_threshold_widget.layout.display = 'flex'
+                else:
+                    staple_threshold_widget.layout.display = 'none'
+
 
     use_dilatation_checkbox.observe(on_dilatation_change, names='value')
     dilation_options_box.layout.display = 'flex' if use_dilatation_checkbox.value else 'none'
+
+    gt_path_widget.register_callback(check_gt_subfolders)
 
     save_mask_checkbox = widgets.Checkbox(
         value=False,
@@ -748,7 +773,7 @@ def create_evaluation_menu():
     run_button = widgets.Button(description="Run Evaluation" , button_style='success', )
     output = widgets.Output()
 
-    display(gt_path_widget, predictions_path_widget,eval_class_widget, 
+    display(gt_path_widget, predictions_path_widget,eval_class_widget, staple_threshold_widget, 
             use_dilatation_checkbox, dilation_options_box, 
             save_mask_checkbox, run_button, output)
     
@@ -766,6 +791,7 @@ def create_evaluation_menu():
             selected_predictions = Path(predictions_path_widget.selected)
             eval_class = eval_class_widget.value
             save_mask = save_mask_checkbox.value
+            staple_thresh = staple_threshold_widget.value
             output_path =  selected_predictions.parent / 'Evaluation_output'
             output_path.mkdir(parents=True, exist_ok=True)
             files_prediction = sorted(selected_predictions.glob("*.tiff"))
@@ -799,7 +825,7 @@ def create_evaluation_menu():
             print('###################################### Looking for missing annotations #################################')
             add_missing_files(files_prediction,anotators_files,selected_gt)
             print('###################################### Evaluation metrics generation ###################################')
-            evaluation_metrics(anotators_files,selected_predictions,files_prediction,output_path,selected_gt,save_mask,dilatation,n_pixels,kernel_shape, eval_class)
+            evaluation_metrics(anotators_files,selected_predictions,files_prediction,output_path,selected_gt,save_mask,dilatation,n_pixels,kernel_shape, eval_class, staple_thresh)
             print('###################################### Generating plots #################################################')
             graph_generator(output_path,selected_predictions,anotators_files)
 

@@ -835,6 +835,54 @@ def create_evaluation_menu():
 
     run_button.on_click(on_button_clicked)
 
+
+def save_summary_plots(df, folder_path, is_single=True):
+
+    if len(df.columns) <= 5:
+        return
+
+    metrics = {
+        'Jaccard': '_jaccard',
+        'Dice': '_dice',
+        'MSD': '_msd',
+        'Hausdorff': '_hausdorff'
+    }
+
+    label_col = 'Statistic' if 'Statistic' in df.columns else 'id'
+    
+    if is_single:
+        plot_df = df[df[label_col] == 'mean']
+    else:
+        plot_df = df
+
+    for title, suffix in metrics.items():
+        relevant_cols = [c for c in df.columns if c.endswith(suffix)]
+        
+        if not relevant_cols:
+            continue
+
+        plt.figure(figsize=(12, 7))
+        
+        x_labels = [c.replace(suffix, '') for c in relevant_cols]
+        
+        for _, row in plot_df.iterrows():
+            label = row[label_col]
+            values = row[relevant_cols].values
+            plt.plot(x_labels, values, marker='o', label=label)
+
+        plt.title(f'Summary of {title} Metrics')
+        plt.xlabel('Annotator')
+        plt.ylabel('Mean')
+        plt.xticks(rotation=45)
+        plt.grid(True, linestyle='--', alpha=0.6)
+        if not is_single or len(plot_df) > 1:
+            plt.legend(title="Models", bbox_to_anchor=(1.05, 1), loc='upper left')
+        
+        plt.tight_layout()
+        save_name = folder_path / f"summary_plot_{title.lower()}.png"
+        plt.savefig(save_name,dpi=300)
+        plt.close()
+
 def generate_statistical_summaries(folder_path: Path):
     """
     Processes CSV files in a given folder to generate statistical summaries.
@@ -939,6 +987,7 @@ def generate_statistical_summaries(folder_path: Path):
         
         output_path = folder_path / 'single_summary.csv' 
         df_single.to_csv(output_path, index=False)
+        save_summary_plots(df_single, folder_path, is_single=True)
         print(f"Generated single summary: {output_path}")
         return 
 
@@ -957,6 +1006,8 @@ def generate_statistical_summaries(folder_path: Path):
         return summary_df
 
     df_mean_all = save_summary(mean_data, 'mean_summary.csv')
+    if df_mean_all is not None:
+        save_summary_plots(df_mean_all, folder_path, is_single=False)
     df_std_all = save_summary(std_data, 'std_summary.csv')
     df_var_all = save_summary(var_data, 'variance_summary.csv')
 
@@ -981,7 +1032,7 @@ def generate_statistical_summaries(folder_path: Path):
                 row_min[col] = 'independent of model election'
                 row_max[col] = 'independent of model election'  
             else:
-                # Lógica para capturar múltiples IDs en caso de empate
+                
                 min_ids = df_indexed.index[df_indexed[col] == min_val].tolist()
                 row_min[col] = ",".join(map(str, min_ids))
 
@@ -1011,8 +1062,6 @@ def generate_statistical_summaries(folder_path: Path):
         print(f"Generated: {final_path}")
     else:
         print("Could not generate min_max_summary.csv.")
-
-
 
 def create_sumary_menu():
     

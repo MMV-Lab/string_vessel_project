@@ -1,15 +1,14 @@
-
-mode: uncertainty_map # This new mode indicate the uncertainity extraction parameters for the extraction in the  pred_slice2vol: section of this file.
+mode: uncertainty_map 
 
 data:
   inference_input:
-    dir: /path/to/the/input/dir
+    dir: /path/to/dir/
     data_type: .tiff,.tif
     reader_params:
-      dimension_order_out: "CZYX"
+      dimension_order_out: "CZYX" 
       T: 0
   inference_output:
-    path:  /path/to/the/output/dir
+    path:  /path/to/output
   preprocess:
     # # Padding smaller images               
     # - module_name: monai.transforms
@@ -17,6 +16,11 @@ data:
     #   params:
     #     spatial_size: [0,300,300] 
     #     mode: "constant"
+    #  #Activate this if the image sape is not divisible by 2^n = k  n number of reducction 2 in channels ProbabilisticUNet ([1, 2, 2, 2, 2] ->2^4 = 16 =k) 
+    # - module_name: monai.transforms
+    #   func_name: DivisiblePad
+    #   params:
+    #     k: [1, k, k]
     - module_name: monai.transforms
       func_name: NormalizeIntensity
       params:
@@ -25,11 +29,12 @@ data:
   postprocess:
     - module_name: mmv_im2im.postprocessing.basic_collection
       func_name: generate_classmap
-    # # Delete the padding used fro the prediction of smaller images
+    # # use this to recover your original image size withot pad here (x,y) it's your original size
     # - module_name: monai.transforms
     #   func_name: CenterSpatialCrop
     #   params:
-    #     roi_size: [0,300,300]
+    #     roi_size: # depends on image shape [x,y], [0,x,y], [1,x,y]
+
 
 #Probabilistic model configuration
 model:
@@ -38,23 +43,26 @@ model:
     module_name: mmv_im2im.models.nets.ProbUnet
     func_name: ProbabilisticUNet
     params:
-      in_channels: 2
-      n_classes: 3 # 0 background + 1 class (vessel)
-      latent_dim: 5 #5 Top/bigret  6 prob
-      model_type: 2D
+      in_channels: 2 # nuber of channels in the input IM
+      out_channels: 3 # one per class
+      spatial_dims: 2 # 2d o 3d for convolutions
+      latent_dim: 6
+      channels: [32, 64, 128, 256, 512]
+      strides: [1, 2, 2, 2, 2]
+      dropout: 0.2
     # Parameter related to the uncertainty map generator and volumetric prediction slice by slice.
     pred_slice2vol:
       uncertainity_map: False  # True generate volume segmentation + uncertainity map / False : Just volume segmentation.
       multi_pred_mode: single # Prediction mode:  single -> Normal way  max/var/mean -> Take advantage of the n_samples and apply the operation to generate a final prediction.  
       max_proj: True #Make Prediction over the max projection on chanels
 
-      # Options for volumes postproces (changes are not reflected in the uncertainity map just in the predictions).
-      n_class_correction: 3
-      pixel_dim: [1,1,1] # Physical pixel sizes (Z,Y,X) to take into account 'auto' -> try to take from the metadata 
-      remove_object_size : [50,30]  # Removes small, isolated regions in the segmentation output. It requires the [minimum size] in pixels an object must have to be kept. 
-      hole_size_threshold: [85,90] # Filling holes within segmented objects. It requires the [maximum area] in pixels a hole must have to be filled. 
-      min_thickness_list: [1000,2] # Rreduce the thickness of the objects, to a minimal [pixel size] while ensuring that the connectivity and general shape of the original object are maintained. 
-      perycites_correction: True
+      # # Options for volumes postproces (changes are not reflected in the uncertainity map just in the predictions).
+      n_class_correction: 3 # Number of classes (counting background)
+      # pixel_dim: [1,1,1] # Physical pixel sizes (Z,Y,X) to take into account 'auto' -> try to take from the metadata 
+      # remove_object_size : [50,30]  # Removes small, isolated regions in the segmentation output. It requires the [minimum size] in pixels an object must have to be kept. 
+      # hole_size_threshold: [85,90] # Filling holes within segmented objects. It requires the [maximum area] in pixels a hole must have to be filled. 
+      # min_thickness_list: [1000,2] # Rreduce the thickness of the objects, to a minimal [pixel size] while ensuring that the connectivity and general shape of the original object are maintained. 
+      # perycites_correction: True
       
       # Options for uncertainty map
       n_samples: 1 # Samples taken for the uncertainty computing and multiprediction option 
@@ -66,7 +74,7 @@ model:
       # trunc: 4 # Number of digits to take into accoun after the float point for the uncertainity_map (trunc = 4 -> 0.xxxx) deafult 4 if you want keep the whole float representation set as False.
       # threshold: 0.5 # Threshold for the uncertainty map  Uncer_map < threshold = 0  (turn 0 every value under de threshold). 
       # border_correction: [2,1] # Number of pixels [x,y] -> [top/dowm,left/right] to take into acount in the border correction.
-  checkpoint:  /path/to/the/ckpt/file/with/model/weights
+  checkpoint:  /path/to/ckpt
   model_extra:
     cpu_only: False
 trainer:

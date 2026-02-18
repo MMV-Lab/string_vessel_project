@@ -8,13 +8,16 @@ from bioio.writers import OmeTiffWriter
 from tqdm.notebook import tqdm
 import bioio_tifffile
 from ipyfilechooser import FileChooser
-from skimage.morphology import binary_dilation, disk, square
+from skimage.morphology import dilation, disk, square
 from scipy.ndimage import label
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.spatial.distance import directed_hausdorff
 from scipy.spatial import KDTree
 import SimpleITK as sitk
+import logging
+logging.getLogger("bioio").setLevel(logging.ERROR)
+
 
 def get_surface_points(matrix):
     """
@@ -272,7 +275,7 @@ def thicken_segmentation_skimage(binary_matrix, n_pixels, kernel_shape):
     
     thickened_segmentation = []
     for zz in range(binary_matrix.shape[0]):
-        thickened_segmentation.append(binary_dilation(binary_matrix[zz], footprint=selem).astype(np.uint8))
+        thickened_segmentation.append(dilation(binary_matrix[zz], footprint=selem).astype(np.uint8))
 
     return np.stack(thickened_segmentation, axis=0)
 
@@ -780,108 +783,241 @@ def create_evaluation_menu():
     def on_button_clicked(b):
         with output:
             output.clear_output()
-            selected_gt = gt_path_widget.selected
-            selected_predictions = predictions_path_widget.selected
-
-            if not selected_gt or not selected_predictions:
+            
+            if not gt_path_widget.selected or not predictions_path_widget.selected:
                 raise ValueError("Please select correct input folders")
                 return
-            
+
             selected_gt = Path(gt_path_widget.selected)
-            selected_predictions = Path(predictions_path_widget.selected)
+            base_prediction_path = Path(predictions_path_widget.selected)
+            
+            # ------------------------------------------------------------------
+            # INPUT DETECTION LOGIC: Single vs Batch
+            # ------------------------------------------------------------------
+            # Check if the selected folder directly contains images (Scenario A)
+            direct_images = sorted(base_prediction_path.glob("*.tiff")) + sorted(base_prediction_path.glob('*.tif'))
+            
+            folders_to_process = []
+            
+            if direct_images:
+                # Scenario A: Single Model
+                print(f"Single model detected at {base_prediction_path.name}")
+                folders_to_process.append(base_prediction_path)
+            else:
+                # Scenario B: Check for subdirectories (Batch Mode)
+                subdirs = [d for d in base_prediction_path.iterdir() if d.is_dir() and not d.name.startswith('.')]
+                if subdirs:
+                    print(f"Batch mode detected. Found {len(subdirs)} subfolders in {base_prediction_path.name}:")
+                    for d in subdirs:
+                         print(f" - {d.name}")
+                    folders_to_process = sorted(subdirs)
+                else:
+                    raise ValueError(f"No .tif/.tiff files or subfolders found in {base_prediction_path}.")
+            
+            # ------------------------------------------------------------------
+            # SETUP COMMON PARAMETERS
+            # ------------------------------------------------------------------
             eval_class = eval_class_widget.value
             save_mask = save_mask_checkbox.value
             staple_thresh = staple_threshold_widget.value
-            output_path =  selected_predictions.parent / 'Evaluation_output'
-            output_path.mkdir(parents=True, exist_ok=True)
-            files_prediction = sorted(selected_predictions.glob("*.tiff"))
-            files_prediction.extend(list(selected_predictions.glob('*.tif')))
-
-            anotators_files = [item.name for item in selected_gt.iterdir() if item.is_dir()]
-
-            if not files_prediction:
-                raise ValueError(f"No predictions files found in {selected_predictions}.")
-                return
             
+            anotators_files = [item.name for item in selected_gt.iterdir() if item.is_dir()]
             if len(anotators_files) == 0:
                 raise ValueError(f"No ground truth folders found in {selected_gt}.")
-                return
-            
+
             dilatation = None
             n_pixels = None
             kernel_shape = None
-
             if use_dilatation_checkbox.value :
                 dilatation = True
                 n_pixels = dilation_pixels_widget.value
                 kernel_shape = dilation_mode_widget.value
 
+            print(f"###################################### { len(anotators_files) } annotators folders found in GT.######################################")
+            
+            # ------------------------------------------------------------------
+            # BATCH EXECUTION LOOP
+            # ------------------------------------------------------------------
+            for current_pred_folder in folders_to_process:
+                output.clear_output(wait=True)
+                print(f"\n=================================================================================")
+                print(f"PROCESSING PREDICTION MODEL: {current_pred_folder.name}")
+                print(f"=================================================================================")
                 
+                # Identify images for current folder
+                files_prediction = sorted(current_pred_folder.glob("*.tiff"))
+                files_prediction.extend(list(current_pred_folder.glob('*.tif')))
+                
+                if not files_prediction:
+                    print(f"WARNING: No images found in {current_pred_folder.name}. Skipping.")
+                    continue
+                
+                # Determine Output Path
+                # If single mode, this is base_path.parent / Eval_Output.
+                # If batch mode, this is base_path / Eval_Output (since current_pred_folder is inside base_path).
+                # This ensures all outputs are grouped logically.
+                output_path = current_pred_folder.parent / 'Evaluation_output'
+                output_path.mkdir(parents=True, exist_ok=True)
+                
+                print(f"Found {len(files_prediction)} prediction files.")
+                
+                print('--- Looking for missing annotations ---')
+                add_missing_files(files_prediction, anotators_files, selected_gt)
+                
+                print('--- Generating evaluation metrics ---')
+                # Note: evaluation_metrics writes a CSV using current_pred_folder name as ID
+                evaluation_metrics(
+                    anotators_files,
+                    current_pred_folder,
+                    files_prediction,
+                    output_path,
+                    selected_gt,
+                    save_mask,
+                    dilatation,
+                    n_pixels,
+                    kernel_shape, 
+                    eval_class, 
+                    staple_thresh
+                )
+                
+                print('--- Generating plots ---')
+                graph_generator(output_path, current_pred_folder, anotators_files)
+                
+                print(f"Completed: {current_pred_folder.name}")
 
-
-            print(f"###################################### { len(files_prediction) } prediction files found.######################################")
-            print(f"###################################### { len(anotators_files) } annotators folders found.######################################")
-            print('###################################### Starting evaluation #############################################')
-            print('###################################### Looking for missing annotations #################################')
-            add_missing_files(files_prediction,anotators_files,selected_gt)
-            print('###################################### Evaluation metrics generation ###################################')
-            evaluation_metrics(anotators_files,selected_predictions,files_prediction,output_path,selected_gt,save_mask,dilatation,n_pixels,kernel_shape, eval_class, staple_thresh)
-            print('###################################### Generating plots #################################################')
-            graph_generator(output_path,selected_predictions,anotators_files)
-
-            print('###################################### Evaluation completed ############################################')
-            print(f'Evaluation results saved at {output_path}')
+            print('\n###################################### All evaluations completed ############################################')
+            print(f'Evaluation results saved at {base_prediction_path.parent if direct_images else base_prediction_path} / Evaluation_output')
             
 
     run_button.on_click(on_button_clicked)
 
-
 def save_summary_plots(df, folder_path, is_single=True):
 
-    if len(df.columns) <= 5:
+    if df.empty:
         return
-
-    metrics = {
-        'Jaccard': '_jaccard',
-        'Dice': '_dice',
-        'MSD': '_msd',
-        'Hausdorff': '_hausdorff'
-    }
 
     label_col = 'Statistic' if 'Statistic' in df.columns else 'id'
     
-    if is_single:
+    if is_single and label_col == 'Statistic':
         plot_df = df[df[label_col] == 'mean']
     else:
         plot_df = df
 
-    for title, suffix in metrics.items():
-        relevant_cols = [c for c in df.columns if c.endswith(suffix)]
-        
-        if not relevant_cols:
-            continue
+    if len(df.columns) <= 5:
+
+        m_jaccard = [c for c in df.columns if 'jaccard' in c.lower()]
+        m_dice = [c for c in df.columns if 'dice' in c.lower()]
+        m_hausdorff = [c for c in df.columns if 'hausdorff' in c.lower()]
+        m_msd = [c for c in df.columns if 'msd' in c.lower()]
+
+        metrics_list = []
+        if m_jaccard: metrics_list.append(('Jaccard', m_jaccard[0], 'left'))
+        if m_dice: metrics_list.append(('Dice', m_dice[0], 'left'))
+        if m_hausdorff: metrics_list.append(('Hausdorff', m_hausdorff[0], 'right'))
+        if m_msd: metrics_list.append(('MSD', m_msd[0], 'right'))
 
         plt.figure(figsize=(12, 7))
-        
-        x_labels = [c.replace(suffix, '') for c in relevant_cols]
-        
-        for _, row in plot_df.iterrows():
-            label = row[label_col]
-            values = row[relevant_cols].values
-            plt.plot(x_labels, values, marker='o', label=label)
+        ax1 = plt.gca()
+        ax2 = ax1.twinx() 
 
-        plt.title(f'Summary of {title} Metrics')
-        plt.xlabel('Annotator')
-        plt.ylabel('Mean')
-        plt.xticks(rotation=45)
-        plt.grid(True, linestyle='--', alpha=0.6)
-        if not is_single or len(plot_df) > 1:
-            plt.legend(title="Models", bbox_to_anchor=(1.05, 1), loc='upper left')
+        n_models = len(plot_df)
+        n_metrics = len(metrics_list)
+        x = np.arange(n_metrics)
+        width = 0.8 / n_models 
+
+        colors = plt.cm.Set1(np.linspace(0, 1, n_models))
         
+        legend_handles = []
+
+        for i, (idx, row) in enumerate(plot_df.iterrows()):
+            model_name = row[label_col]
+            model_color = colors[i]
+            
+
+            vals_left = []
+            x_left = []
+            vals_right = []
+            x_right = []
+
+            for m_idx, (m_label, col_name, side) in enumerate(metrics_list):
+                pos = m_idx + (i - n_models/2 + 0.5) * width
+                val = row[col_name]
+                
+                if side == 'left':
+                    bar = ax1.bar(pos, val, width, color=model_color, alpha=0.8, edgecolor='black', linewidth=0.5)
+                else:
+                    bar = ax2.bar(pos, val, width, color=model_color, alpha=0.6, hatch='//', edgecolor='black', linewidth=0.5)
+                
+                if m_idx == 0:
+                    legend_handles.append(plt.Rectangle((0,0),1,1, color=model_color, label=model_name))
+
+        ax1.set_ylabel('Precision Scores (Jaccard / Dice)', color='blue', fontsize=12, fontweight='bold')
+        ax1.set_ylim(0, 1.1)
+        ax1.tick_params(axis='y', labelcolor='blue')
+
+        ax2.set_ylabel('Distance Metrics (Hausdorff / MSD)', color='red', fontsize=12, fontweight='bold')
+        ax2.tick_params(axis='y', labelcolor='red')
+
+        plt.title('Model Comparison ', fontsize=14, pad=20)
+        ax1.set_xticks(x)
+        ax1.set_xticklabels([m[0] for m in metrics_list], fontsize=11)
+        ax1.set_xlabel('Evaluation Metrics', fontsize=12)
+        
+        ax1.legend(handles=legend_handles, title="Models", loc='upper left', bbox_to_anchor=(1.15, 1))
+        
+
+        ax1.grid(axis='y', linestyle='--', alpha=0.3)
         plt.tight_layout()
-        save_name = folder_path / f"summary_plot_{title.lower()}.png"
-        plt.savefig(save_name,dpi=300)
+        
+        save_name = folder_path / "summary_plot.png"
+        plt.savefig(save_name, dpi=300)
         plt.close()
+        print(f"Generated dual-axis bar plot: {save_name}")
+
+    else:
+        metrics = {
+            'Jaccard': '_jaccard',
+            'Dice': '_dice',
+            'MSD': '_msd',
+            'Hausdorff': '_hausdorff'
+        }
+
+        label_col = 'Statistic' if 'Statistic' in df.columns else 'id'
+        
+        if is_single:
+            plot_df = df[df[label_col] == 'mean']
+        else:
+            plot_df = df
+
+        for title, suffix in metrics.items():
+            relevant_cols = [c for c in df.columns if c.endswith(suffix)]
+            
+            if not relevant_cols:
+                continue
+
+            plt.figure(figsize=(12, 7))
+            
+            x_labels = [c.replace(suffix, '') for c in relevant_cols]
+            
+            for _, row in plot_df.iterrows():
+                label = row[label_col]
+                values = row[relevant_cols].values
+                plt.plot(x_labels, values, marker='o', label=label)
+
+            plt.title(f'Summary of {title} Metrics')
+            plt.xlabel('Annotator')
+            plt.ylabel('Mean')
+            plt.xticks(rotation=45)
+            plt.grid(True, linestyle='--', alpha=0.6)
+            if not is_single or len(plot_df) > 1:
+                plt.legend(title="Models", bbox_to_anchor=(1.05, 1), loc='upper left')
+            
+            plt.tight_layout()
+            save_name = folder_path / f"summary_plot_{title.lower()}.png"
+            plt.savefig(save_name,dpi=300)
+            plt.close()
+
+
 
 def generate_statistical_summaries(folder_path: Path):
     """

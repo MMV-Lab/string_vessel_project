@@ -74,27 +74,38 @@ def _execute_processing_logic(use_dim_fix, get_channels, src_path_str, out_path_
             else:
                 im = img[get_channels, :, :, :]
 
-            # clean up filenames to get rid of spaces
+            # clean up filenames and output path
             sname_cleaned = sname.replace("/", "_")
-
-            # save individual multi-channel Tiff files
             out_fn = out_path_3d / f"{fn.stem}_{sname_cleaned}.tiff"
 
-            # adding pixel info
+            # adding pixel info, normalize pps to a tuple (Z, Y, X)
             pps = getattr(reader, "physical_pixel_sizes", None)
+            
             if pps is None:
-                voxel_sizes = PhysicalPixelSizes(None,None,None)
+                raw_voxel_sizes = (None, None, None)
             elif isinstance(pps, tuple):
-                voxel_sizes = pps  # tuple like (Z, Y, X)
+                raw_voxel_sizes = pps  # tuple like (Z, Y, X)
             else:
-                voxel_sizes = (getattr(pps, "Z", None),
-                               getattr(pps, "Y", None),
-                               getattr(pps, "X", None))
-                voxel_sizes = PhysicalPixelSizes(voxel_sizes[0],voxel_sizes[1],voxel_sizes[2])
+                raw_voxel_sizes = (getattr(pps, "Z", None),
+                                   getattr(pps, "Y", None),
+                                   getattr(pps, "X", None))
 
-            voxel_sizes = [1.0 if v is None else float(v) for v in voxel_sizes]
-            voxel_sizes = PhysicalPixelSizes(voxel_sizes[0],voxel_sizes[1],voxel_sizes[2])
-     
+            # Clean up missing/incorrect data, populate
+            corrected_sizes = []
+            axes_names = ["Z", "Y", "X"]
+            
+            for i, val in enumerate(raw_voxel_sizes):
+                if val is None:
+                    cleaned_val = 1.0
+                else:
+                    cleaned_val = float(val)
+                    if cleaned_val < 0:
+                        tqdm.write(f"  [Metadata Fix] Corrected negative pixel size for {axes_names[i]} in '{fn.name}' scene '{sname}': {cleaned_val} -> {abs(cleaned_val)}")
+                        cleaned_val = abs(cleaned_val)
+                corrected_sizes.append(cleaned_val)
+
+            # Create corrected PhysicalPixelSizes object
+            voxel_sizes = PhysicalPixelSizes(corrected_sizes[0], corrected_sizes[1], corrected_sizes[2])
      
             OmeTiffWriter.save(
                 data=im,
@@ -104,7 +115,6 @@ def _execute_processing_logic(use_dim_fix, get_channels, src_path_str, out_path_
                 physical_pixel_units="micron", 
             )
             
-
     print("\nImage processing completed!")
 
 
@@ -122,12 +132,29 @@ def run_image_processing_menu():
         indent=False
     )
 
-    get_channels_text_widget = widgets.Text(
-        value='1, 2',
-        description='Channels:',
+
+    channel_header = widgets.Label(value="Channel specification")
+
+    # Input for CD31 Channel (int1)
+    cd31_widget = widgets.IntText(
+        value=1,
+        description='CD31 Channel:',
         disabled=False,
-        continuous_update=False
+        layout=widgets.Layout(width='10%'),
+        style={'description_width': '50%'} 
     )
+
+    # Input for Col IV Channel (int2)
+    col_iv_widget = widgets.IntText(
+        value=2,
+        description='Col IV Channel:',
+        disabled=False,
+        layout=widgets.Layout(width='10%'),
+        style={'description_width': '50%'}
+    )
+
+    channels_container = widgets.HBox([cd31_widget, col_iv_widget])
+
     src_path_widget = FileChooser(
         Path.cwd().as_posix(), 
         title='Select LIF files folder',
@@ -160,7 +187,6 @@ def run_image_processing_menu():
 
             try:
                 use_dim_fix = use_dim_fix_widget.value
-                get_channels_str = get_channels_text_widget.value
                 src_path_str = src_path_widget.selected
                 out_path_base_str = out_path_base_widget.selected
 
@@ -168,12 +194,13 @@ def run_image_processing_menu():
                     raise ValueError("Please select and input/output file.")
                     return
 
-                try:
-                    get_channels = [int(ch.strip()) for ch in get_channels_str.split(',') if ch.strip()]
-                    if not get_channels:
-                        raise ValueError("Channel list cannot be empty.")
-                except ValueError:
-                    print("Error: Channels must be comma-separated integers. E.g., '1, 2'")
+       
+                int1 = cd31_widget.value
+                int2 = col_iv_widget.value
+                if isinstance(int1,int) and isinstance(int2,int):
+                    get_channels = [int1, int2]
+                else:
+                    raise ValueError("CD31 and Col VI channels should be integers.")
                     return
 
                 # Call the core processing logic
@@ -185,5 +212,13 @@ def run_image_processing_menu():
     run_button.on_click(on_run_button_clicked)
 
     # Display the widgets
-    display(use_dim_fix_widget, get_channels_text_widget, src_path_widget, out_path_base_widget, run_button, output_area)
+    display(
+        use_dim_fix_widget, 
+        channel_header,     
+        channels_container, 
+        src_path_widget, 
+        out_path_base_widget, 
+        run_button, 
+        output_area
+    )
     

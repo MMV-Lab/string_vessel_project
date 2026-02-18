@@ -951,11 +951,11 @@ def save_summary_plots(df, folder_path, is_single=True):
                 if m_idx == 0:
                     legend_handles.append(plt.Rectangle((0,0),1,1, color=model_color, label=model_name))
 
-        ax1.set_ylabel('Precision Scores (Jaccard / Dice)', color='blue', fontsize=12, fontweight='bold')
+        ax1.set_ylabel('Precision Scores (Jaccard / Dice)↑', color='blue', fontsize=12, fontweight='bold')
         ax1.set_ylim(0, 1.1)
         ax1.tick_params(axis='y', labelcolor='blue')
 
-        ax2.set_ylabel('Distance Metrics (Hausdorff / MSD)', color='red', fontsize=12, fontweight='bold')
+        ax2.set_ylabel('Distance Metrics (Hausdorff / MSD)↓', color='red', fontsize=12, fontweight='bold')
         ax2.tick_params(axis='y', labelcolor='red')
 
         plt.title('Model Comparison ', fontsize=14, pad=20)
@@ -1004,7 +1004,13 @@ def save_summary_plots(df, folder_path, is_single=True):
                 values = row[relevant_cols].values
                 plt.plot(x_labels, values, marker='o', label=label)
 
-            plt.title(f'Summary of {title} Metrics')
+            if title == 'Dice' or title == 'Jaccard':
+                titlef = f'Summary of {title} Metrics ↑' 
+            else:
+                titlef = f'Summary of {title} Metrics ↓' 
+
+
+            plt.title(titlef)
             plt.xlabel('Annotator')
             plt.ylabel('Mean')
             plt.xticks(rotation=45)

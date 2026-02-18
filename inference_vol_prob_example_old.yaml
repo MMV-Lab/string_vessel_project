@@ -17,11 +17,6 @@ data:
     #   params:
     #     spatial_size: [0,300,300] 
     #     mode: "constant"
-    #  #Activate this if the image sape is not divisible by 2^n = k  n number of reducction 2 in channels AttentionUnet ([1, 2, 2, 2, 2] ->2^4 = 16 =k) 
-    # - module_name: monai.transforms
-    #   func_name: DivisiblePad
-    #   params:
-    #     k: [1, k, k]
     - module_name: monai.transforms
       func_name: NormalizeIntensity
       params:
@@ -30,25 +25,23 @@ data:
   postprocess:
     - module_name: mmv_im2im.postprocessing.basic_collection
       func_name: generate_classmap
-    # # use this to recover your original image size withot pad here (x,y) it's your original size
+    # # Delete the padding used fro the prediction of smaller images
     # - module_name: monai.transforms
     #   func_name: CenterSpatialCrop
     #   params:
-    #     roi_size: # depends on image shape [x,y], [0,x,y], [1,x,y]
+    #     roi_size: [0,300,300]
 
-#classic model configuration
+#Probabilistic model configuration
 model:
-  framework: FCN
+  framework: ProbUnet
   net:
-    module_name: monai.networks.nets
-    func_name: AttentionUnet
+    module_name: mmv_im2im.models.nets.ProbUnet
+    func_name: ProbabilisticUNet
     params:
-      in_channels: 3 # nuber of channels in the input IM
-      out_channels: 2 # one per class
-      spatial_dims: 2 # 2d o 3d for convolutions
-      channels: [32, 64, 128, 256, 512]
-      strides: [1, 2, 2, 2, 2]
-      dropout: 0.2
+      in_channels: 2
+      n_classes: 3 # 0 background + 1 class (vessel)
+      latent_dim: 5 #5 Top/bigret  6 prob
+      model_type: 2D
     # Parameter related to the uncertainty map generator and volumetric prediction slice by slice.
     pred_slice2vol:
       uncertainity_map: False  # True generate volume segmentation + uncertainity map / False : Just volume segmentation.
@@ -57,12 +50,12 @@ model:
 
       # Options for volumes postproces (changes are not reflected in the uncertainity map just in the predictions).
       n_class_correction: 3
-      pixel_dim: [1,1,1] # Physical pixel sizes (Z,Y,X) to take into account 'auto' -> try to take from the metadata 
-      remove_object_size : [50,30]  # Removes small, isolated regions in the segmentation output. It requires the [minimum size] in pixels an object must have to be kept. 
-      hole_size_threshold: [85,90] # Filling holes within segmented objects. It requires the [maximum area] in pixels a hole must have to be filled. 
-      min_thickness_list: [1000,2] # Rreduce the thickness of the objects, to a minimal [pixel size] while ensuring that the connectivity and general shape of the original object are maintained. 
-      perycites_correction: True 
-
+      # pixel_dim: [1,1,1] # Physical pixel sizes (Z,Y,X) to take into account 'auto' -> try to take from the metadata 
+      # remove_object_size : [50,30]  # Removes small, isolated regions in the segmentation output. It requires the [minimum size] in pixels an object must have to be kept. 
+      # hole_size_threshold: [85,90] # Filling holes within segmented objects. It requires the [maximum area] in pixels a hole must have to be filled. 
+      # min_thickness_list: [1000,2] # Rreduce the thickness of the objects, to a minimal [pixel size] while ensuring that the connectivity and general shape of the original object are maintained. 
+      # perycites_correction: True
+      
       # Options for uncertainty map
       n_samples: 1 # Samples taken for the uncertainty computing and multiprediction option 
       # compute_mode: mutual_inf # Type of uncertainty computation variance /mutual_inf(bayesian model entropy)/entropy(total epistemic+model)/prob_inv(1-prob).
@@ -80,4 +73,4 @@ trainer:
   verbose: True
   params:
     gpus: 1
-    precision: 16
+    precision: 32

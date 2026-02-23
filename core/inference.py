@@ -7,6 +7,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module='monai')
 warnings.filterwarnings("ignore", category=UserWarning, message='^In the future `np.bool` will be defined as the corresponding NumPy scalar')
 warnings.filterwarnings("ignore", category=DeprecationWarning, message='^In the future `np.bool` will be defined as the corresponding NumPy scalar')
 warnings.filterwarnings("ignore", category=DeprecationWarning, module='numpy')
+warnings.filterwarnings("ignore",category=FutureWarning)
 
 import copy
 from pathlib import Path

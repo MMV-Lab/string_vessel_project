@@ -462,11 +462,7 @@ def evaluation_metrics(anotators_files,selected_predictions,files_prediction,out
             counts_staple.append(0)    
         
         all_jaccard_indices.append(jaccard_computing(n_annotators,annotations, model_pred))
-        # if xxx >= 4:
-        #     pr=95
-        # else:
-        #     pr=100
-        all_hausdorff_distances.append(hausdorff_computing(100,n_annotators,annotations, model_pred))
+        all_hausdorff_distances.append(hausdorff_computing(95,n_annotators,annotations, model_pred))
         all_mean_surface_distance.append(msd_computing(n_annotators,annotations, model_pred))
         all_biou.append(boundary_iou_computing(n_annotators,annotations, model_pred))
         all_oca.append(oca_computing(n_annotators,annotations, model_pred))
@@ -1275,5 +1271,6 @@ def create_sumary_menu():
             print('###################################### Sumary generation ############################################')
             generate_statistical_summaries(selected_path)
             print('###################################### Sumary complete ############################################')
+
 
     run_button.on_click(on_button_clicked)

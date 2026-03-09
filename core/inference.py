@@ -37,6 +37,7 @@ from pyrallis.utils import Dataclass, PyrallisException
 from pyrallis.wrappers import DataclassWrapper
 from tqdm.notebook import tqdm
 import gc
+import yaml
 import torch
 import bioio_tifffile
 from ipyfilechooser import FileChooser
@@ -205,6 +206,17 @@ def create_inference_menu():
     yaml_path_widget.filter_pattern = ['*.yaml'] 
     yaml_path_widget.layout = widgets.Layout(width='80%')
 
+    model_dims_widget = widgets.Dropdown(
+        options={
+            '2D': '2D', 
+            '3D': '3D'
+        },
+        value='2D', 
+        description='Spatial model dimension:',
+        disabled=False,
+        style={'description_width':'50%'} 
+    )     
+
     # --- SINGLE MODEL WIDGETS ---
     ckpt_path_widget = FileChooser(
         Path.cwd().as_posix(),
@@ -295,7 +307,7 @@ def create_inference_menu():
     default_params = {"pixelDimensions": "1.0, 1.0, 1.0"}
 
     meta_pixel_dim_widget = widgets.Checkbox(
-        value=True,
+        value=False,
         description='Use pixel dimensions from image metadata',
         indent=True,
          style={'description_width': '0%'}
@@ -309,9 +321,10 @@ def create_inference_menu():
     )
 
     apply_thickness_checkbox = widgets.Checkbox(
-        value=True,
+        value=False,
         description="Apply Thickness Adjustment",
-        disabled=False
+        disabled=False,
+        indent=False
     )
     min_thickness_list_text = widgets.Text(
         value="1000,2", 
@@ -322,9 +335,10 @@ def create_inference_menu():
     )
 
     use_remove_objects_checkbox = widgets.Checkbox(
-        value=True,
+        value=False,
         description="Apply Remove Small Objects",
-        disabled=False
+        disabled=False,
+        indent=False
     )
     remove_objects_text = widgets.Text(
         value="50,30", 
@@ -334,9 +348,10 @@ def create_inference_menu():
         layout=widgets.Layout(width='80%')
     )
     apply_holes_checkbox = widgets.Checkbox(
-        value=True,
+        value=False,
         description="Apply Small Holes Correction",
-        disabled=False
+        disabled=False,
+        indent=False
     )
 
     hole_size_threshold_text = widgets.Text(
@@ -348,13 +363,24 @@ def create_inference_menu():
     )
 
     apply_pericytes_checkbox = widgets.Checkbox(
-        value=True,
+        value=False,
         description="Apply Pericytes Correction",
         disabled=False,
         indent=False
     )
 
     # --- LOGIC FOR UI INTERACTIVITY ---
+
+    def check_yaml(chooser):
+        if chooser.selected:
+            with open(chooser.selected, "r") as f:
+                config = yaml.safe_load(f)
+            spatial_dim = config.get("model",{}).get("net",{}).get("params",{}).get("spatial_dims",None)
+            if spatial_dim is None:
+                model_dims_widget.layout.display = 'flex'
+            else:
+                model_dims_widget.layout.display = 'none'  
+
 
     def toggle_thickness_text(change):
         min_thickness_list_text.layout.display = 'block' if change['new'] else 'none'
@@ -462,6 +488,9 @@ def create_inference_menu():
     models_folder_widget.register_callback(update_multimodel_ui)
     weight_options_dropdown.observe(update_multimodel_ui, names='value')
 
+    model_dims_widget.layout.display = 'none' 
+    yaml_path_widget.register_callback(check_yaml)
+
     run_button = widgets.Button(description="Run Inference" , button_style='success', )
     output = widgets.Output()
 
@@ -469,7 +498,8 @@ def create_inference_menu():
     display(
         pipeline_mode_header, pipeline_mode_dropdown,
         config_header,
-        yaml_path_widget, 
+        yaml_path_widget,
+        model_dims_widget, 
         ckpt_path_widget,
         models_folder_widget,
         output_path_widget,
@@ -539,12 +569,17 @@ def create_inference_menu():
                 if 'spatial_dims' in  base_cfg.model.net['params'] : 
                     spatial_dims = base_cfg.model.net.get('params', {}).get('spatial_dims', 2)
                 else:
-                    spatial_dims = 2
-                    if 'ProbUnet' in base_cfg.model.framework:
-                        base_cfg.model.framework = base_cfg.model.framework + '_old'
-                        base_cfg.model.net['module_name'] =  base_cfg.model.net['module_name']+'_old'
-
+                    spatial_dims = None
+                    if model_dims_widget.layout.display != 'none':
+                        if model_dims_widget.value == '2D':
+                            spatial_dims = 2
+                        else:
+                            spatial_dims = 3
                 
+                if model_dims_widget.layout.display != 'none' and 'ProbUnet' in base_cfg.model.framework:
+                    base_cfg.model.framework = base_cfg.model.framework + '_old'
+                    base_cfg.model.net['module_name'] =  base_cfg.model.net['module_name']+'_old'
+
                 if spatial_dims == 3:
                     inference_mode = 'vol2vol'
                     print(f"Info: Spatial dimensions = 3. Using volumetric inference mode ({inference_mode}).")
@@ -660,5 +695,6 @@ def create_inference_menu():
                     run_single_inference(copy.deepcopy(base_cfg), ckpt, output_path / out_name)
                 print(f"######################## Predictios for {len(inference_tasks)} models done #############################")
                 print("\n######################## All Predictions Ready #############################")
+
 
     run_button.on_click(on_button_clicked)

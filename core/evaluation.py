@@ -19,6 +19,9 @@ import logging
 import torch
 import monai
 from monai.metrics import HausdorffDistanceMetric, SurfaceDistanceMetric
+import yaml
+from monai.transforms import Spacing, Resize
+from monai.data import MetaTensor
 
 logging.getLogger("bioio").setLevel(logging.ERROR)
 
@@ -323,14 +326,21 @@ def read_file(fn):
     
     return img_pred
 
-def extract_sv(matrix, target_class):
+def extract_class(matrix, target_class):
     if len(matrix.shape) == 2:
         matrix = matrix[None,...]
     
     if len(matrix.shape) != 3:
         raise ValueError(f"Image dims {matrix.shape} but ZYX are required")
     
-    return (matrix == target_class).astype(np.uint8)
+    if isinstance(target_class, int):
+        class_f = (matrix == target_class).astype(np.uint8)
+    elif isinstance(target_class, str):
+        class_f = (matrix > 0).astype(np.uint8)
+    else:
+        raise ValueError(f"Check the target class str/int input is required but {target_class}-{type(target_class)} is given.")         
+    
+    return class_f
 
 def count_components(matrix):
     if len(matrix.shape) == 2:
@@ -376,11 +386,23 @@ def add_missing_files(files_prediction,anotators_files,selected_gt):
                 OmeTiffWriter.save(data=zero_pred, uri=save_path, dim_order="ZYX")
 
 
-def evaluation_metrics(anotators_files,selected_predictions,files_prediction,output_path,selected_gt,save_mask,dilatation,n_pixels,kernel_shape, eval_class, staple_threshold=0.5):
+def evaluation_metrics(anotators_files,
+    selected_predictions,
+    files_prediction,
+    output_path,
+    selected_gt,
+    save_mask,
+    dilatation,
+    n_pixels,
+    kernel_shape,
+    eval_class, 
+    staple_threshold=0.5
+    ):
 
     if save_mask: 
         (selected_predictions.parent / 'Generated_masks').mkdir(parents=True, exist_ok=True)
     
+
     headers = [folder.split('_')[-1] for folder in anotators_files]
     headers.extend(['Union','Intersection','Staple','Model'])
     headers.insert(0,'image_id')
@@ -412,10 +434,11 @@ def evaluation_metrics(anotators_files,selected_predictions,files_prediction,out
     for fn in tqdm(files_prediction, desc= "Evaluation process"):
         stem_file = fn.stem.replace('_segPred','')
         image_id.append(stem_file)
+
         if dilatation is None:
-            model_pred = binarizar_matrix(extract_sv(read_file(fn), eval_class))   
+            model_pred = binarizar_matrix(extract_class(read_file(fn), eval_class))   
         else:
-            model_pred = thicken_segmentation_skimage(binarizar_matrix(extract_sv(read_file(fn), eval_class)),n_pixels,kernel_shape)      
+            model_pred = thicken_segmentation_skimage(binarizar_matrix(extract_class(read_file(fn), eval_class)),n_pixels,kernel_shape)      
         counts_model.append(count_components(model_pred)) 
         annotations = []
         count_folder = []
@@ -428,14 +451,16 @@ def evaluation_metrics(anotators_files,selected_predictions,files_prediction,out
                 try:
                     ann_im = read_file(selected_gt / folder / tif_file) 
                 except Exception as e:
-                    raise ValueError(f"Error founding {stem_file} in {folder}.")
+                    raise ValueError(f"Error founding {stem_file} in {folder}.")      
             if model_pred.shape != ann_im.shape:
-                raise ValueError(f"Image {stem_file} has different shape for {folder} model prediction {model_pred.shape} differ from {ann_im.shape}.") 
-            if dilatation is None:
-                ann_im = binarizar_matrix(ann_im)
-            else:
-                ann_im = thicken_segmentation_skimage(binarizar_matrix(ann_im),n_pixels,kernel_shape)
+                raise ValueError(f"Image {stem_file} has different shape for {folder} model prediction {model_pred.shape} differ from {ann_im.shape}.")
 
+   
+            ann_im = binarizar_matrix(ann_im)
+   
+            if dilatation is not None:
+                ann_im = thicken_segmentation_skimage(binarizar_matrix(ann_im),n_pixels,kernel_shape)    
+ 
             count_folder.append(count_components(ann_im)) 
             annotations.append(ann_im)
         
@@ -747,16 +772,15 @@ def create_evaluation_menu():
         select_default=False 
     )
 
-    eval_class_widget = widgets.BoundedIntText(
-        value=2,           
-        min=0,             
-        step=1,
-        description='Evaluation Class:',
+    outName = widgets.Text(
+        value='Evaluation_output',
+        placeholder='Folder name',
+        description='Output folder name (optional):',
         disabled=False,
-        style={'description_width': 'initial'},
-        layout=widgets.Layout(width='150px')
+        style={'description_width':'initial'},
+        layout=widgets.Layout(width='30%')
     )
-
+ 
     staple_threshold_widget = widgets.BoundedFloatText(
         value=0.5,
         min=0.0,
@@ -805,6 +829,7 @@ def create_evaluation_menu():
         else:
             dilation_options_box.layout.display = 'none'
 
+
     def check_gt_subfolders(chooser):
         if chooser.selected:
             path = Path(chooser.selected)
@@ -817,7 +842,7 @@ def create_evaluation_menu():
                     staple_threshold_widget.layout.display = 'none'
                     save_mask_checkbox.value = False
                     save_mask_checkbox.layout.display = 'none'
-
+    
     use_dilatation_checkbox.observe(on_dilatation_change, names='value')
     dilation_options_box.layout.display = 'flex' if use_dilatation_checkbox.value else 'none'
 
@@ -832,7 +857,7 @@ def create_evaluation_menu():
     run_button = widgets.Button(description="Run Evaluation" , button_style='success', )
     output = widgets.Output()
 
-    display(gt_path_widget, predictions_path_widget,eval_class_widget, staple_threshold_widget, 
+    display(gt_path_widget, predictions_path_widget,outName, staple_threshold_widget, 
             use_dilatation_checkbox, dilation_options_box, 
             save_mask_checkbox, run_button, output)
     
@@ -863,11 +888,11 @@ def create_evaluation_menu():
                     folders_to_process = sorted(subdirs)
                 else:
                     raise ValueError(f"No .tif/.tiff files or subfolders found in {base_prediction_path}.")
-            
-            eval_class = eval_class_widget.value
+
+            eval_class = 2
             save_mask = save_mask_checkbox.value
             staple_thresh = staple_threshold_widget.value
-            
+            folder_name = outName.value
             anotators_files = [item.name for item in selected_gt.iterdir() if item.is_dir()]
             if len(anotators_files) == 0:
                 raise ValueError(f"No ground truth folders found in {selected_gt}.")
@@ -895,14 +920,13 @@ def create_evaluation_menu():
                     print(f"WARNING: No images found in {current_pred_folder.name}. Skipping.")
                     continue
                 
-                output_path = current_pred_folder.parent / 'Evaluation_output'
+                output_path = current_pred_folder.parent / folder_name
                 output_path.mkdir(parents=True, exist_ok=True)
                 
                 print(f"Found {len(files_prediction)} prediction files.")
                 
                 print('--- Looking for missing annotations ---')
                 add_missing_files(files_prediction, anotators_files, selected_gt)
-                #xxx = len(str(current_pred_folder.name).split('+'))
                 print('--- Generating evaluation metrics ---')
                 evaluation_metrics(
                     anotators_files,
@@ -924,7 +948,7 @@ def create_evaluation_menu():
                 print(f"Completed: {current_pred_folder.name}")
 
             print('\n###################################### All evaluations completed ############################################')
-            print(f'Evaluation results saved at {base_prediction_path.parent if direct_images else base_prediction_path} / Evaluation_output')
+            print(f'Evaluation results saved at {base_prediction_path.parent if direct_images else base_prediction_path} / {folder_name}')
             
     run_button.on_click(on_button_clicked)
 
@@ -1271,6 +1295,5 @@ def create_sumary_menu():
             print('###################################### Sumary generation ############################################')
             generate_statistical_summaries(selected_path)
             print('###################################### Sumary complete ############################################')
-
 
     run_button.on_click(on_button_clicked)

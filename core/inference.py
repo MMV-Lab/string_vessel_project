@@ -264,7 +264,7 @@ def create_inference_menu():
         title='Select the images folder for prediction',
         select_default=False 
     )
-    path_base_widget.filter_pattern = ['*.tiff', '*.tif'] 
+    path_base_widget.show_only_dirs = True 
     path_base_widget.layout = widgets.Layout(width='80%')
 
     # --- Inference Options --- section
@@ -699,3 +699,4 @@ def create_inference_menu():
 
 
     run_button.on_click(on_button_clicked)
+

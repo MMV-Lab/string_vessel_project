@@ -46,7 +46,7 @@ model:
       in_channels: 2 # nuber of channels in the input IM
       out_channels: 3 # one per class
       spatial_dims: 2 # 2d o 3d for convolutions
-      latent_dim: 6
+      latent_dim: 5
       channels: [32, 64, 128, 256, 512]
       strides: [1, 2, 2, 2, 2]
       dropout: 0.2

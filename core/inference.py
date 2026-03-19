@@ -626,7 +626,7 @@ def create_inference_menu():
                 if not ckpt_path_widget.selected:
                     print("Error: Select a CKPT file.")
                     return
-                run_single_inference(copy.deepcopy(base_cfg), ckpt_path_widget.selected, Path(selected_path_base) / "model_predictions")
+                run_single_inference(copy.deepcopy(base_cfg), ckpt_path_widget.selected, Path(selected_path_base).parent / "model_predictions")
                 print("######################## Prediction Ready #############################")
 
             elif mode == 'multi model':

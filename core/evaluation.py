@@ -27,18 +27,10 @@ logging.getLogger("bioio").setLevel(logging.ERROR)
 
 
 def to_monai_tensor(matrix):
-    """
-    Converts a numpy array of shape (Z, Y, X) or (Y, X) into 
-    a MONAI compatible PyTorch tensor of shape (B, C, ...).
-    """
     return torch.tensor(matrix, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
 
 
 def extract_boundary(mask, min_boundary_width=1, dilation_ratio=0.02):
-    """
-    Extracts the boundary of a binary mask using morphological operations.
-    Supports both 2D and 3D robustly.
-    """
     if not np.any(mask):
         return np.zeros_like(mask, dtype=bool)
         
@@ -52,9 +44,6 @@ def extract_boundary(mask, min_boundary_width=1, dilation_ratio=0.02):
 
 
 def boundary_iou(y_pred, y_true):
-    """
-    Calculates Boundary Intersection over Union (Boundary Crispness).
-    """
     bound_pred = extract_boundary(y_pred)
     bound_true = extract_boundary(y_true)
     
@@ -67,9 +56,6 @@ def boundary_iou(y_pred, y_true):
 
 
 def overall_contour_agreement(y_pred, y_true):
-    """
-    Calculates the Overall Contour Agreement (Boundary Dice / F1 Score).
-    """
     bound_pred = extract_boundary(y_pred)
     bound_true = extract_boundary(y_true)
     
@@ -132,9 +118,6 @@ def hausdorff_computing(pr,n_annotators, predictions_list, m_gt):
 
 
 def msd_computing(n_annotators, predictions_list, m_gt):
-    """
-    Calculates Symmetric Mean Surface Distance using MONAI.
-    """
     metric_fn = SurfaceDistanceMetric(include_background=True, symmetric=True, get_not_nans=False)
     m_gt_t = to_monai_tensor(m_gt)
     msd_results = []
@@ -386,7 +369,8 @@ def add_missing_files(files_prediction,anotators_files,selected_gt):
                 OmeTiffWriter.save(data=zero_pred, uri=save_path, dim_order="ZYX")
 
 
-def evaluation_metrics(anotators_files,
+def evaluation_metrics(
+    anotators_files,
     selected_predictions,
     files_prediction,
     output_path,
@@ -396,33 +380,35 @@ def evaluation_metrics(anotators_files,
     n_pixels,
     kernel_shape,
     eval_class, 
-    staple_threshold=0.5
+    staple_threshold,
+    eval_annotators,
+    use_staple,
+    use_union,
+    use_inter
     ):
 
     if save_mask: 
         (selected_predictions.parent / 'Generated_masks').mkdir(parents=True, exist_ok=True)
     
+    ann_headers = [folder.split('_')[-1] for folder in eval_annotators]
+    gen_headers = []
+    if use_union: gen_headers.append('Union')
+    if use_inter: gen_headers.append('Intersection')
+    if use_staple: gen_headers.append('Staple')
+    
+    all_eval_headers = ann_headers + gen_headers
+    headers = ['image_id'] + all_eval_headers + ['Model']
 
-    headers = [folder.split('_')[-1] for folder in anotators_files]
-    headers.extend(['Union','Intersection','Staple','Model'])
-    headers.insert(0,'image_id')
-    jacci_head = []
-    for head in headers:
-        if head != 'image_id' and head != 'Model':
-            jacci_head.append(head+'_jaccard')
+    jacci_head = [h + '_jaccard' for h in all_eval_headers]
     jacci_head.append('annotators_agree_jaccard')
-    jacci_head.append('annotators_model_agree_jaccard')     
-    headers.extend(jacci_head) 
+    jacci_head.append('annotators_model_agree_jaccard')
 
     eval_id = str(selected_predictions).split('_')[-1]
-    n_annotators = len(anotators_files)
+    n_primary = len(eval_annotators)
     
     image_id = []
     counts_model = []
     counts_folder = []
-    counts_unions = []
-    counts_intersections = []
-    counts_staple = []
     all_jaccard_indices = []
     all_hausdorff_distances = []
     all_mean_surface_distance = [] 
@@ -440,9 +426,12 @@ def evaluation_metrics(anotators_files,
         else:
             model_pred = thicken_segmentation_skimage(binarizar_matrix(extract_class(read_file(fn), eval_class)),n_pixels,kernel_shape)      
         counts_model.append(count_components(model_pred)) 
-        annotations = []
-        count_folder = []
-        for folder in anotators_files:
+        
+        source_folders = eval_annotators if n_primary >= 2 else anotators_files
+        folders_to_read = list(set(source_folders + eval_annotators))
+        mask_cache = {}
+        
+        for folder in folders_to_read:
             tiff_file = str(stem_file)+'.tiff'
             tif_file = str(stem_file)+'.tif'
             try:
@@ -455,63 +444,62 @@ def evaluation_metrics(anotators_files,
             if model_pred.shape != ann_im.shape:
                 raise ValueError(f"Image {stem_file} has different shape for {folder} model prediction {model_pred.shape} differ from {ann_im.shape}.")
 
-   
             ann_im = binarizar_matrix(ann_im)
-   
             if dilatation is not None:
-                ann_im = thicken_segmentation_skimage(binarizar_matrix(ann_im),n_pixels,kernel_shape)    
- 
-            count_folder.append(count_components(ann_im)) 
-            annotations.append(ann_im)
-        
-        counts_folder.append(count_folder)
-        if n_annotators >= 2:             
-            union, intersection = combine_binary_masks(annotations)
-            staple_filter = sitk.STAPLEImageFilter()
-            staple_filter.SetMaximumIterations (100)
-            consensus = staple_filter.Execute([sitk.GetImageFromArray(arr) for arr in annotations])
-            staple_mask = sitk.GetArrayFromImage(consensus > staple_threshold).astype(np.uint8) 
-            annotations.extend([union, intersection, staple_mask])
-            all_sensitivity.append(list(staple_filter.GetSensitivity())) 
-            all_specificity.append(list(staple_filter.GetSpecificity()))
-            counts_unions.append(count_components(union)) 
-            counts_intersections.append(count_components(intersection)) 
-            counts_staple.append(count_components(staple_mask))    
-        else:
-            shapeM = annotations[0].shape
-            annotations.extend([np.zeros(shapeM), np.zeros(shapeM), np.zeros(shapeM)])
-            all_sensitivity.append([0]) 
-            all_specificity.append([0])
-            counts_unions.append(0) 
-            counts_intersections.append(0) 
-            counts_staple.append(0)    
-        
-        all_jaccard_indices.append(jaccard_computing(n_annotators,annotations, model_pred))
-        all_hausdorff_distances.append(hausdorff_computing(95,n_annotators,annotations, model_pred))
-        all_mean_surface_distance.append(msd_computing(n_annotators,annotations, model_pred))
-        all_biou.append(boundary_iou_computing(n_annotators,annotations, model_pred))
-        all_oca.append(oca_computing(n_annotators,annotations, model_pred))
+                ann_im = thicken_segmentation_skimage(binarizar_matrix(ann_im),n_pixels,kernel_shape)
+            mask_cache[folder] = ann_im
             
-        if save_mask and (n_annotators >= 2):
-            OmeTiffWriter.save(data=union, uri=selected_predictions.parent / 'Generated_masks' /fn.name.replace('segPred','union'), dim_order="ZYX")
-            OmeTiffWriter.save(data=intersection, uri=selected_predictions.parent / 'Generated_masks' /fn.name.replace('segPred','intersection'), dim_order="ZYX")
-            OmeTiffWriter.save(data=staple_mask, uri=selected_predictions.parent / 'Generated_masks' /fn.name.replace('segPred','staple_mask'), dim_order="ZYX")
+        current_eval_masks = [mask_cache[f] for f in eval_annotators]
 
-    transposed_counts_folder = list(zip(*counts_folder))
-    data = {headers[0]: image_id} 
+        if use_union or use_inter or use_staple:
+            source_masks = [mask_cache[f] for f in source_folders]
+            if len(source_masks) >= 2:
+                union, intersection = combine_binary_masks(source_masks)
+                staple_filter = sitk.STAPLEImageFilter()
+                staple_filter.SetMaximumIterations (100)
+                consensus = staple_filter.Execute([sitk.GetImageFromArray(arr) for arr in source_masks])
+                staple_mask = sitk.GetArrayFromImage(consensus > staple_threshold).astype(np.uint8) 
+                
+                if use_union: current_eval_masks.append(union)
+                if use_inter: current_eval_masks.append(intersection)
+                if use_staple: 
+                    current_eval_masks.append(staple_mask)
+                    if n_primary >= 2:
+                        all_sensitivity.append(list(staple_filter.GetSensitivity())) 
+                        all_specificity.append(list(staple_filter.GetSpecificity()))
+                        
+                if save_mask and (len(anotators_files) >= 2):
+                    if use_union: OmeTiffWriter.save(data=union, uri=selected_predictions.parent / 'Generated_masks' /fn.name.replace('segPred','union'), dim_order="ZYX")
+                    if use_inter: OmeTiffWriter.save(data=intersection, uri=selected_predictions.parent / 'Generated_masks' /fn.name.replace('segPred','intersection'), dim_order="ZYX")
+                    if use_staple: OmeTiffWriter.save(data=staple_mask, uri=selected_predictions.parent / 'Generated_masks' /fn.name.replace('segPred','staple_mask'), dim_order="ZYX")
+            else:
+                blank_m = np.zeros_like(model_pred)
+                if use_union: current_eval_masks.append(blank_m)
+                if use_inter: current_eval_masks.append(blank_m)
+                if use_staple: current_eval_masks.append(blank_m)
+                if n_primary >= 2 and use_staple:
+                    all_sensitivity.append([0]*n_primary) 
+                    all_specificity.append([0]*n_primary)
+                    
+        counts_folder.append([count_components(m) for m in current_eval_masks])
+        
+        all_jaccard_indices.append(jaccard_computing(n_primary, current_eval_masks, model_pred))
+        all_hausdorff_distances.append(hausdorff_computing(95, n_primary, current_eval_masks, model_pred))
+        all_mean_surface_distance.append(msd_computing(n_primary, current_eval_masks, model_pred))
+        all_biou.append(boundary_iou_computing(n_primary, current_eval_masks, model_pred))
+        all_oca.append(oca_computing(n_primary, current_eval_masks, model_pred))
 
-    annotator_headers = headers[1:len(anotators_files) + 1]
-    for i, header in enumerate(annotator_headers):
-        data[header] = list(transposed_counts_folder[i])
-
-    data['Union'] = counts_unions
-    data['Intersection'] = counts_intersections
-    data['Staple'] = counts_staple
+    data = {'image_id': image_id} 
+    if counts_folder:
+        transposed_counts = list(zip(*counts_folder))
+        for i, h in enumerate(all_eval_headers):
+            data[h] = list(transposed_counts[i])
+            
     data['Model'] = counts_model
 
     transposed_jaccard = list(zip(*all_jaccard_indices))
-    for i, header in enumerate(jacci_head):
-       data[header] = list(transposed_jaccard[i])
+    for i, h in enumerate(jacci_head):
+       data[h] = list(transposed_jaccard[i])
 
     df = pd.DataFrame(data)
     
@@ -521,43 +509,28 @@ def evaluation_metrics(anotators_files,
         df[dice_col] = df[j_col].apply(lambda j: (2 * j) / (1 + j) if j >= 0 else 0)
     
     transposed_hausdorff = list(zip(*all_hausdorff_distances)) 
-    for i, j_col in enumerate(jaccard_columns):
-        hausdorff_col = j_col.replace('_jaccard', '_hausdorff')
-        df[hausdorff_col] = list(transposed_hausdorff[i])
-
     transposed_mean_surface_distance = list(zip(*all_mean_surface_distance)) 
-    for i, j_col in enumerate(jaccard_columns):
-        mean_surface_distance_col = j_col.replace('_jaccard', '_msd')
-        df[mean_surface_distance_col] = list(transposed_mean_surface_distance[i])
-        
     transposed_biou = list(zip(*all_biou)) 
-    for i, j_col in enumerate(jaccard_columns):
-        biou_col = j_col.replace('_jaccard', '_biou')
-        df[biou_col] = list(transposed_biou[i])
-
     transposed_oca = list(zip(*all_oca)) 
-    for i, j_col in enumerate(jaccard_columns):
-        oca_col = j_col.replace('_jaccard', '_oca')
-        df[oca_col] = list(transposed_oca[i])
     
-    transposed_sensitivity = list(zip(*all_sensitivity))
-    for i ,col in enumerate(headers[1:n_annotators+1]):  
-        sens_col = col+'_sensivity'
-        df[sens_col] = list(transposed_sensitivity[i])
+    for i, j_col in enumerate(jacci_head):
+        df[j_col.replace('_jaccard', '_hausdorff')] = list(transposed_hausdorff[i])
+        df[j_col.replace('_jaccard', '_msd')] = list(transposed_mean_surface_distance[i])
+        df[j_col.replace('_jaccard', '_biou')] = list(transposed_biou[i])
+        df[j_col.replace('_jaccard', '_oca')] = list(transposed_oca[i])
     
-    transposed_specificity = list(zip(*all_specificity))
-    for i ,col in enumerate(headers[1:n_annotators+1]):  
-        spe_col = col+'_specificity'
-        df[spe_col] = list(transposed_specificity[i])
+    if n_primary >= 2 and use_staple:
+        transposed_sensitivity = list(zip(*all_sensitivity))
+        transposed_specificity = list(zip(*all_specificity))
+        for i, h in enumerate(ann_headers):  
+            df[f"{h}_sensivity"] = list(transposed_sensitivity[i])
+            df[f"{h}_specificity"] = list(transposed_specificity[i])
     
-    if n_annotators < 2:
-        cols_to_keep = ['image_id', headers[1], 'Model']
-        base_ann = headers[1]
-        for metric in ['_jaccard', '_dice', '_hausdorff', '_msd', '_biou', '_oca']:
-            col_name = base_ann + metric
-            if col_name in df.columns:
-                cols_to_keep.append(col_name)
-        df = df[cols_to_keep]
+    if n_primary < 2:
+        cols_to_drop = []
+        for m in ['_jaccard', '_dice', '_hausdorff', '_msd', '_biou', '_oca']:
+            cols_to_drop.extend([f"annotators_agree{m}", f"annotators_model_agree{m}"])
+        df.drop(columns=cols_to_drop, errors='ignore', inplace=True)
         
     csv_filename = f'model_evaluation_{eval_id}.csv'
     csv_path = output_path / csv_filename
@@ -640,122 +613,102 @@ def plot_distributions(dataframe, columns, title, filename_base, y_label):
 
 
 def graph_generator(output_path,selected_predictions,anotators_files):
-    
-    n_annotators = len(anotators_files)
     eval_id = str(selected_predictions).split('_')[-1]
-    (output_path / (eval_id +'_graphs')).mkdir(parents=True, exist_ok=True)
+    graphs_dir = output_path / (eval_id +'_graphs')
+    graphs_dir.mkdir(parents=True, exist_ok=True)
     df = pd.read_csv(output_path / f'model_evaluation_{eval_id}.csv')
     
-    if n_annotators >= 2:
-        counts_ann = df.columns[1:n_annotators+1].tolist() + ['Model']
-        counts_gen = df.columns[n_annotators+1:n_annotators+4].tolist()
+    base_cols = df.columns.tolist()
+    ignore_cols = ['image_id', 'Model']
+    metric_suffixes = ['_jaccard', '_dice', '_hausdorff', '_msd', '_biou', '_oca', '_sensivity', '_specificity']
+    
+    gt_names = [c for c in base_cols if c not in ignore_cols and not any(c.endswith(s) for s in metric_suffixes)]
+    ann_names = [c for c in gt_names if c not in ['Union', 'Intersection', 'Staple']]
+    gen_names = [c for c in gt_names if c in ['Union', 'Intersection', 'Staple']]
+    
+    has_agreement = 'annotators_agree_jaccard' in base_cols
 
-        jaccard_cols = [c for c in df.columns if c.endswith('_jaccard')]
-        dice_cols = [c for c in df.columns if c.endswith('_dice')]
-        hausdorff_cols = [c for c in df.columns if c.endswith('_hausdorff')]
-        msd_cols = [c for c in df.columns if c.endswith('_msd')]
-        biou_cols = [c for c in df.columns if c.endswith('_biou')]
-        oca_cols = [c for c in df.columns if c.endswith('_oca')]
+    if len(ann_names) >= 2 or has_agreement:
+        counts_ann = ann_names + ['Model'] if ann_names else ['Model']
+        counts_gen = gen_names
 
-        def get_ann_gen_agree(metric_cols):
-            ann = metric_cols[:n_annotators]
-            gen = metric_cols[n_annotators:n_annotators+3]
-            agree = metric_cols[-2:]
-            return ann, gen, agree
+        def get_metric_cols(suffix):
+            ann = [f"{a}{suffix}" for a in ann_names if f"{a}{suffix}" in base_cols]
+            gen = [f"{g}{suffix}" for g in gen_names if f"{g}{suffix}" in base_cols]
+            agr = [f"annotators_agree{suffix}", f"annotators_model_agree{suffix}"] if has_agreement else []
+            return ann, gen, agr
 
-        jaccard_ann, jaccard_gen, jaccard_agree = get_ann_gen_agree(jaccard_cols)
-        dice_ann, dice_gen, dice_agree = get_ann_gen_agree(dice_cols)
-        hausdorff_ann, hausdorff_gen, hausdorff_agree = get_ann_gen_agree(hausdorff_cols)
-        msd_ann, msd_gen, msd_agree = get_ann_gen_agree(msd_cols)
-        biou_ann, biou_gen, biou_agree = get_ann_gen_agree(biou_cols)
-        oca_ann, oca_gen, oca_agree = get_ann_gen_agree(oca_cols)
+        metrics_map = [
+            ('_jaccard', 'Jaccard index', 'jaccard'),
+            ('_dice', 'Dice index', 'dice'),
+            ('_hausdorff', 'Hausdorff distance', 'hausdorff'),
+            ('_msd', 'Mean surface distance', 'msd'),
+            ('_biou', 'Boundary IoU', 'biou'),
+            ('_oca', 'Overall Contour Agreement', 'oca')
+        ]
 
-        sensitivity_ann = [c for c in df.columns if c.endswith('_sensivity')]
-        specificity_ann = [c for c in df.columns if c.endswith('_specificity')]
+        colors = plt.cm.get_cmap('tab10', max(len(ann_names), 5))
 
-        colors = plt.cm.get_cmap('tab10', max(len(jaccard_ann), len(dice_ann)))
+        if ann_names:
+            plot_curves(df, counts_ann, 'Annotators vs Model Findings', graphs_dir / 'annotators_model_findings.png', colors, 'Findings')
+            plot_distributions(df, counts_ann, 'Annotators vs Model Findings', graphs_dir / 'annotators_model_findings', 'Findings')
+            for suffix, title, m_name in metrics_map:
+                ann_cols, _, _ = get_metric_cols(suffix)
+                if ann_cols:
+                    plot_curves(df, ann_cols, 'Annotators vs Model', graphs_dir / f'annotators_model_{m_name}.png', colors, title)
+                    plot_distributions(df, ann_cols, 'Annotators vs Model', graphs_dir / f'annotators_model_{m_name}', title)
 
-        plot_curves(df,counts_ann,'Annotators vs Model Findings', output_path / (eval_id +'_graphs') / 'annotators_model_findings.png', colors,'Findings')
-        plot_curves(df,counts_gen,'Generated Masks vs Model Findings', output_path / (eval_id +'_graphs') / 'generated_masks_model_findings.png', colors,'Findings')
-        
-        plot_curves(df,jaccard_ann,'Annotators vs Model', output_path / (eval_id +'_graphs') / 'annotators_model_jaccard.png', colors,'Jaccard index')
-        plot_curves(df,dice_ann,'Annotators vs Model', output_path / (eval_id +'_graphs') / 'annotators_model_dice.png', colors,'Dice index')
-        plot_curves(df,hausdorff_ann,'Annotators vs Model', output_path / (eval_id +'_graphs') / 'annotators_model_hausdorff.png', colors,'Hausdorff distance')
-        plot_curves(df,msd_ann,'Annotators vs Model', output_path / (eval_id +'_graphs') / 'annotators_model_msd.png', colors,'Mean surface distance')
-        plot_curves(df,biou_ann,'Annotators vs Model', output_path / (eval_id +'_graphs') / 'annotators_model_biou.png', colors,'Boundary IoU')
-        plot_curves(df,oca_ann,'Annotators vs Model', output_path / (eval_id +'_graphs') / 'annotators_model_oca.png', colors,'Overall Contour Agreement')
-        
-        plot_curves(df,jaccard_gen,'Generated Mask vs Model', output_path / (eval_id +'_graphs') / 'generated_masks_model_jaccard.png', colors,'Jaccard index')
-        plot_curves(df,dice_gen,'Generated Mask vs Model', output_path / (eval_id +'_graphs') / 'generated_masks_model_dice.png', colors,'Dice index')
-        plot_curves(df,hausdorff_gen,'Generated Mask vs Model', output_path / (eval_id +'_graphs') / 'generated_masks_model_hausdorff.png', colors,'Hausdorff distance')
-        plot_curves(df,msd_gen,'Generated Mask vs Model', output_path / (eval_id +'_graphs') / 'generated_masks_model_msd.png', colors,'Mean surface distance')
-        plot_curves(df,biou_gen,'Generated Mask vs Model', output_path / (eval_id +'_graphs') / 'generated_masks_model_biou.png', colors,'Boundary IoU')
-        plot_curves(df,oca_gen,'Generated Mask vs Model', output_path / (eval_id +'_graphs') / 'generated_masks_model_oca.png', colors,'Overall Contour Agreement')
+        if gen_names:
+            plot_curves(df, gen_names, 'Generated Masks vs Model Findings', graphs_dir / 'generated_masks_model_findings.png', colors, 'Findings')
+            plot_distributions(df, gen_names, 'Generated Masks vs Model Findings', graphs_dir / 'generated_masks_model_findings', 'Findings')
+            for suffix, title, m_name in metrics_map:
+                _, gen_cols, _ = get_metric_cols(suffix)
+                if gen_cols:
+                    plot_curves(df, gen_cols, 'Generated Mask vs Model', graphs_dir / f'generated_masks_model_{m_name}.png', colors, title)
+                    plot_distributions(df, gen_cols, 'Generated Mask vs Model', graphs_dir / f'generated_masks_model_{m_name}', title)
 
-        plot_curves(df,jaccard_agree,'Jaccard Agreement', output_path / (eval_id +'_graphs') / 'agreement_jaccard.png', colors,'Jaccard index')
-        plot_curves(df,dice_agree,'Dice Agreement', output_path / (eval_id +'_graphs') / 'agreement_dice.png', colors,'Dice index')
-        plot_curves(df,hausdorff_agree,'Hausdorff Agreement', output_path / (eval_id +'_graphs') / 'agreement_hausdorff.png', colors,'Hausdorff distance')
-        plot_curves(df,msd_agree,'Mean surface Agreement', output_path / (eval_id +'_graphs') / 'agreement_msd.png', colors,'Mean surface distance')
-        plot_curves(df,biou_agree,'Boundary IoU Agreement', output_path / (eval_id +'_graphs') / 'agreement_biou.png', colors,'Boundary IoU')
-        plot_curves(df,oca_agree,'Overall Contour Agreement', output_path / (eval_id +'_graphs') / 'agreement_oca.png', colors,'Overall Contour Agreement')
+        if has_agreement:
+            for suffix, title, m_name in metrics_map:
+                _, _, agr_cols = get_metric_cols(suffix)
+                if agr_cols:
+                    plot_curves(df, agr_cols, f'{title} Agreement', graphs_dir / f'agreement_{m_name}.png', colors, title)
+                    plot_distributions(df, agr_cols, f'{title} Agreement', graphs_dir / f'agreement_{m_name}', title)
 
-        plot_curves(df,sensitivity_ann,'STAPLE Sensitivity', output_path / (eval_id +'_graphs') / 'staple_sensitivity.png', colors,'Sensitivity')
-        plot_curves(df,specificity_ann,'STAPLE Specificity', output_path / (eval_id +'_graphs') / 'staple_specificity.png', colors,'Specificity')
-        
-        plot_distributions(df, counts_ann, 'Annotators vs Model Findings', output_path / (eval_id +'_graphs') / 'annotators_model_findings', 'Findings')
-        plot_distributions(df, counts_gen, 'Generated Masks vs Model Findings', output_path / (eval_id +'_graphs') / 'generated_masks_model_findings', 'Findings')
-
-        plot_distributions(df, jaccard_ann, 'Annotators vs Model', output_path / (eval_id +'_graphs') / 'annotators_model_jaccard', 'Jaccard Index')
-        plot_distributions(df, dice_ann, 'Annotators vs Model', output_path / (eval_id +'_graphs') / 'annotators_model_dice', 'Dice Index')
-        plot_distributions(df, hausdorff_ann, 'Annotators vs Model', output_path / (eval_id +'_graphs') / 'annotators_model_hausdorff', 'Hausdorff distance')
-        plot_distributions(df, msd_ann, 'Annotators vs Model', output_path / (eval_id +'_graphs') / 'annotators_model_msd', 'Mean surface distance')
-        plot_distributions(df, biou_ann, 'Annotators vs Model', output_path / (eval_id +'_graphs') / 'annotators_model_biou', 'Boundary IoU')
-        plot_distributions(df, oca_ann, 'Annotators vs Model', output_path / (eval_id +'_graphs') / 'annotators_model_oca', 'Overall Contour Agreement')
-
-        plot_distributions(df, jaccard_gen, 'Generated Mask vs Model', output_path / (eval_id +'_graphs') / 'generated_masks_model_jaccard', 'Jaccard Index')
-        plot_distributions(df, dice_gen, 'Generated Mask vs Model', output_path / (eval_id +'_graphs') / 'generated_masks_model_dice', 'Dice Index')
-        plot_distributions(df, hausdorff_gen, 'Generated Mask vs Model', output_path / (eval_id +'_graphs') / 'generated_masks_model_hausdorff', 'Hausdorff distance')
-        plot_distributions(df, msd_gen, 'Generated Mask vs Model', output_path / (eval_id +'_graphs') / 'generated_masks_model_msd', 'Mean surface distance')
-        plot_distributions(df, biou_gen, 'Generated Mask vs Model', output_path / (eval_id +'_graphs') / 'generated_masks_model_biou', 'Boundary IoU')
-        plot_distributions(df, oca_gen, 'Generated Mask vs Model', output_path / (eval_id +'_graphs') / 'generated_masks_model_oca', 'Overall Contour Agreement')
-
-        plot_distributions(df, jaccard_agree, 'Jaccard Agreement', output_path / (eval_id +'_graphs') / 'agreement_jaccard', 'Jaccard Index')
-        plot_distributions(df, dice_agree, 'Dice Agreement', output_path / (eval_id +'_graphs') / 'agreement_dice', 'Dice Index')
-        plot_distributions(df, hausdorff_agree, 'Hausdorff Agreement', output_path / (eval_id +'_graphs') / 'agreement_hausdorff', 'Hausdorff distance')
-        plot_distributions(df, msd_agree, 'Mean surface Agreement', output_path / (eval_id +'_graphs') / 'agreement_msd', 'Mean surface distance')
-        plot_distributions(df, biou_agree, 'Boundary IoU Agreement', output_path / (eval_id +'_graphs') / 'agreement_biou', 'Boundary IoU')
-        plot_distributions(df, oca_agree, 'Overall Contour Agreement', output_path / (eval_id +'_graphs') / 'agreement_oca', 'Overall Contour Agreement')
-
-        plot_distributions(df, sensitivity_ann, 'STAPLE Sensitivity', output_path / (eval_id +'_graphs') / 'staple_sensitivity', 'Sensitivity')
-        plot_distributions(df, specificity_ann, 'STAPLE Specificity', output_path / (eval_id +'_graphs') / 'staple_specificity', 'Specificity')
+        if 'Staple' in gen_names and ann_names:
+            sens_cols = [f"{a}_sensivity" for a in ann_names if f"{a}_sensivity" in base_cols]
+            spec_cols = [f"{a}_specificity" for a in ann_names if f"{a}_specificity" in base_cols]
+            if sens_cols:
+                plot_curves(df, sens_cols, 'STAPLE Sensitivity', graphs_dir / 'staple_sensitivity.png', colors, 'Sensitivity')
+                plot_distributions(df, sens_cols, 'STAPLE Sensitivity', graphs_dir / 'staple_sensitivity', 'Sensitivity')
+            if spec_cols:
+                plot_curves(df, spec_cols, 'STAPLE Specificity', graphs_dir / 'staple_specificity.png', colors, 'Specificity')
+                plot_distributions(df, spec_cols, 'STAPLE Specificity', graphs_dir / 'staple_specificity', 'Specificity')
     else:
-        counts_ann = [df.columns[1], 'Model']
-        jaccard_ann = [c for c in df.columns if c.endswith('_jaccard')]
-        dice_ann = [c for c in df.columns if c.endswith('_dice')]
-        hausdorff_ann = [c for c in df.columns if c.endswith('_hausdorff')]
-        msd_ann = [c for c in df.columns if c.endswith('_msd')]
-        biou_ann = [c for c in df.columns if c.endswith('_biou')]
-        oca_ann = [c for c in df.columns if c.endswith('_oca')]
+        target = gt_names[0] if gt_names else None
+        if not target: return
+        
+        counts_single = [target, 'Model']
+        colors = ['blue', 'green']
+        
+        plot_curves(df, counts_single, 'Annotator vs Model Findings', graphs_dir / 'annotator_model_findings.png', colors, 'Findings')
+        plot_distributions(df, counts_single, 'Annotator vs Model Findings', graphs_dir / 'annotator_model_findings', 'Findings')
+        
+        metrics_map = [
+            ('_jaccard', 'Jaccard index', 'jaccard'),
+            ('_dice', 'Dice index', 'dice'),
+            ('_hausdorff', 'Hausdorff distance', 'hausdorff'),
+            ('_msd', 'Mean surface distance', 'msd'),
+            ('_biou', 'Boundary IoU', 'biou'),
+            ('_oca', 'Overall Contour Agreement', 'oca')
+        ]
+        
+        for suffix, title, m_name in metrics_map:
+            metric_col = f"{target}{suffix}"
+            if metric_col in base_cols:
+                plot_curves(df, [metric_col], 'Annotator vs Model', graphs_dir / f'annotator_model_{m_name}.png', colors, title)
+                plot_distributions(df, [metric_col], 'Annotator vs Model', graphs_dir / f'annotator_model_{m_name}', title)
 
-        colors = plt.cm.get_cmap('tab10', max(len(jaccard_ann), len(dice_ann)))
 
-        plot_curves(df,counts_ann,'Annotator vs Model Findings', output_path / (eval_id +'_graphs') / 'annotator_model_findings.png', ['blue', 'green'],'Findings')
-        plot_curves(df,jaccard_ann,'Annotator vs Model', output_path / (eval_id +'_graphs') / 'annotator_model_jaccard.png', colors,'Jaccard index')
-        plot_curves(df,dice_ann,'Annotator vs Model', output_path / (eval_id +'_graphs') / 'annotator_model_dice.png', colors,'Dice index')
-        plot_curves(df,hausdorff_ann,'Annotator vs Model', output_path / (eval_id +'_graphs') / 'annotator_model_hausdorff.png', colors,'Hausdorff distance')
-        plot_curves(df,msd_ann,'Annotator vs Model', output_path / (eval_id +'_graphs') / 'annotator_model_msd.png', colors,'Mean surface distance')
-        plot_curves(df,biou_ann,'Annotator vs Model', output_path / (eval_id +'_graphs') / 'annotator_model_biou.png', colors,'Boundary IoU')
-        plot_curves(df,oca_ann,'Annotator vs Model', output_path / (eval_id +'_graphs') / 'annotator_model_oca.png', colors,'Overall Contour Agreement')
-
-        plot_distributions(df, counts_ann, 'Annotator vs Model Findings', output_path / (eval_id +'_graphs') / 'annotator_model_findings', 'Findings')
-        plot_distributions(df, jaccard_ann, 'Annotator vs Model', output_path / (eval_id +'_graphs') / 'annotator_model_jaccard', 'Jaccard Index')
-        plot_distributions(df, dice_ann, 'Annotator vs Model', output_path / (eval_id +'_graphs') / 'annotator_model_dice', 'Dice Index')
-        plot_distributions(df, hausdorff_ann, 'Annotator vs Model', output_path / (eval_id +'_graphs') / 'annotator_model_hausdorff', 'Hausdorff distance')
-        plot_distributions(df, msd_ann, 'Annotator vs Model', output_path / (eval_id +'_graphs') / 'annotator_model_msd', 'Mean surface distance')
-        plot_distributions(df, biou_ann, 'Annotator vs Model', output_path / (eval_id +'_graphs') / 'annotator_model_biou', 'Boundary IoU')
-        plot_distributions(df, oca_ann, 'Annotator vs Model', output_path / (eval_id +'_graphs') / 'annotator_model_oca', 'Overall Contour Agreement')
-
- 
 def create_evaluation_menu():
     
     gt_path_widget = FileChooser(
@@ -829,19 +782,47 @@ def create_evaluation_menu():
         else:
             dilation_options_box.layout.display = 'none'
 
+    gt_config_box = widgets.VBox()
 
     def check_gt_subfolders(chooser):
         if chooser.selected:
             path = Path(chooser.selected)
             if path.exists():
                 subdirs = [d for d in path.iterdir() if d.is_dir()]
-                if len(subdirs) > 2:
+                if len(subdirs) >= 2:
                     staple_threshold_widget.layout.display = 'flex'
                     save_mask_checkbox.layout.display = 'flex'
+                    
+                    title = widgets.HTML("<b>-- GT configurations --</b>")
+                    all_ann_cb = widgets.Checkbox(value=True, description='all annotators')
+                    indiv_cbs = [widgets.Checkbox(value=False, description=d.name) for d in subdirs]
+                    staple_cb = widgets.Checkbox(value=False, description='STAPLE')
+                    union_cb = widgets.Checkbox(value=False, description='Union')
+                    inter_cb = widgets.Checkbox(value=False, description='Intersection')
+                    
+                    # Cambio a HBox con flex_flow para alinear horizontalmente y permitir saltos de línea
+                    indiv_box = widgets.HBox(indiv_cbs + [staple_cb, union_cb, inter_cb])
+                    indiv_box.layout.flex_flow = 'row wrap'
+                    indiv_box.layout.display = 'none'
+                    
+                    def on_all_ann_change(change):
+                        indiv_box.layout.display = 'none' if change['new'] else 'flex'
+                    all_ann_cb.observe(on_all_ann_change, names='value')
+                    
+                    gt_config_box.children = [title, all_ann_cb, indiv_box]
+                    
+                    run_button.all_ann_cb = all_ann_cb
+                    run_button.indiv_cbs = indiv_cbs
+                    run_button.staple_cb = staple_cb
+                    run_button.union_cb = union_cb
+                    run_button.inter_cb = inter_cb
+                    run_button.has_multi_gt = True
                 else:
                     staple_threshold_widget.layout.display = 'none'
                     save_mask_checkbox.value = False
                     save_mask_checkbox.layout.display = 'none'
+                    gt_config_box.children = []
+                    run_button.has_multi_gt = False
     
     use_dilatation_checkbox.observe(on_dilatation_change, names='value')
     dilation_options_box.layout.display = 'flex' if use_dilatation_checkbox.value else 'none'
@@ -857,7 +838,7 @@ def create_evaluation_menu():
     run_button = widgets.Button(description="Run Evaluation" , button_style='success', )
     output = widgets.Output()
 
-    display(gt_path_widget, predictions_path_widget,outName, staple_threshold_widget, 
+    display(gt_path_widget, predictions_path_widget, outName, gt_config_box, staple_threshold_widget, 
             use_dilatation_checkbox, dilation_options_box, 
             save_mask_checkbox, run_button, output)
     
@@ -894,8 +875,27 @@ def create_evaluation_menu():
             staple_thresh = staple_threshold_widget.value
             folder_name = outName.value
             anotators_files = [item.name for item in selected_gt.iterdir() if item.is_dir()]
+            
             if len(anotators_files) == 0:
                 raise ValueError(f"No ground truth folders found in {selected_gt}.")
+
+            eval_annotators = []
+            use_staple = use_union = use_intersection = False
+            
+            if getattr(run_button, 'has_multi_gt', False):
+                if run_button.all_ann_cb.value:
+                    eval_annotators = anotators_files
+                    use_staple = use_union = use_intersection = True
+                else:
+                    eval_annotators = [cb.description for cb in run_button.indiv_cbs if cb.value]
+                    use_staple = run_button.staple_cb.value
+                    use_union = run_button.union_cb.value
+                    use_intersection = run_button.inter_cb.value
+                    
+                if not eval_annotators and not (use_staple or use_union or use_intersection):
+                    raise ValueError("Please select at least one Ground Truth configuration.")
+            else:
+                eval_annotators = anotators_files
 
             dilatation = None
             n_pixels = None
@@ -905,7 +905,7 @@ def create_evaluation_menu():
                 n_pixels = dilation_pixels_widget.value
                 kernel_shape = dilation_mode_widget.value
 
-            print(f"###################################### { len(anotators_files) } annotators folders found in GT.######################################")
+            print(f"###################################### GT Configuration Settled. ######################################")
             
             for current_pred_folder in folders_to_process:
                 output.clear_output(wait=True)
@@ -939,7 +939,11 @@ def create_evaluation_menu():
                     n_pixels,
                     kernel_shape, 
                     eval_class, 
-                    staple_thresh
+                    staple_thresh,
+                    eval_annotators,
+                    use_staple,
+                    use_union,
+                    use_intersection
                 )
                 
                 print('--- Generating plots ---')
@@ -1299,4 +1303,3 @@ def create_sumary_menu():
             print('###################################### Sumary complete ############################################')
 
     run_button.on_click(on_button_clicked)
-

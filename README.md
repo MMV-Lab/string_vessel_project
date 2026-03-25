@@ -1,4 +1,4 @@
-# Stirng vessel project
+# String vessel project
 
 # How to install
 

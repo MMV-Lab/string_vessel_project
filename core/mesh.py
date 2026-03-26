@@ -12,9 +12,55 @@ import trimesh
 from bioio.writers import OmeTiffWriter
 import vedo
 import napari
+import torch
 
+class LaplacianSmooth:
 
+    def __init__(self, aggr='mean'):
+        self.aggr = aggr
 
+    def __call__(self, x: torch.Tensor, adj_matrix: torch.sparse_coo_tensor, lambd=0.5) -> torch.Tensor:
+        neighbor_sum = torch.sparse.mm(adj_matrix, x)
+        
+        if self.aggr == 'mean':
+            degrees = torch.sparse.sum(adj_matrix, dim=1).to_dense().view(-1, 1)
+            neighbor_avg = neighbor_sum / degrees.clamp(min=1)
+            out = (1 - lambd) * x + lambd * neighbor_avg
+        else:
+            out = (1 - lambd) * x + lambd * neighbor_sum
+            
+        return out
+
+def apply_laplacian_smooth_vedo(mesh, iters=20, lambd=0.5):
+    if iters <= 0:
+        return mesh
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    pts = mesh.vertices
+    faces = mesh.cells
+    
+    edges_i = []
+    edges_j = []
+    for face in faces:
+        for start, end in [(0,1), (1,2), (2,0)]:
+            edges_i.append(face[start])
+            edges_j.append(face[end])
+            edges_i.append(face[end])
+            edges_j.append(face[start])
+            
+    indices = torch.tensor([edges_i, edges_j], device=device)
+    values = torch.ones(len(edges_i), device=device)
+    adj = torch.sparse_coo_tensor(indices, values, (len(pts), len(pts))).coalesce()
+    
+    v = torch.tensor(pts, dtype=torch.float32, device=device)
+    smoother = LaplacianSmooth(aggr='mean')
+    
+    for _ in range(iters):
+        v = smoother(v, adj, lambd=lambd)
+        
+    new_pts = v.detach().cpu().numpy()
+    new_mesh = vedo.Mesh([new_pts, faces])
+    new_mesh.compute_normals()
+    return new_mesh
 
 def mesh_compute(volume,pixel_size,out_path,fileID,smooth_use):
     sv_vol = volume.copy()
@@ -26,48 +72,35 @@ def mesh_compute(volume,pixel_size,out_path,fileID,smooth_use):
     if np.max(sv_vol) != 0:
         sv_mesh = trimesh.voxel.ops.matrix_to_marching_cubes(sv_vol, pitch=pixel_size)
         sv_vedo = vedo.Mesh([sv_mesh.vertices, sv_mesh.faces])
-        sv_path = out_path / f'{fileID}_sv_mesh.stl'
+        sv_path = out_path / f'{fileID}_sv_mesh.obj'
         vedo.write(sv_vedo, sv_path)
         if smooth_use:
-            sv_smooth = sv_vedo.smooth(niter=20, pass_band=0.07)
-            sv_path_smooth = out_path / f'{fileID}_sv_mesh_smooth.stl'
+            sv_smooth = apply_laplacian_smooth_vedo(sv_vedo, iters=20, lambd=0.5)
+            sv_path_smooth = out_path / f'{fileID}_sv_mesh_smooth.obj'
             vedo.write(sv_smooth, sv_path_smooth)
       
     if np.max(nv_vol) != 0:
         nv_mesh = trimesh.voxel.ops.matrix_to_marching_cubes(nv_vol, pitch=pixel_size)
         nv_vedo = vedo.Mesh([nv_mesh.vertices, nv_mesh.faces])
-        nv_path = out_path / f'{fileID}_nv_mesh.stl'
+        nv_path = out_path / f'{fileID}_nv_mesh.obj'
         vedo.write(nv_vedo, nv_path)
 
         if smooth_use:
-            nv_smooth = nv_vedo.smooth(niter=20, pass_band=0.07)
-            nv_path_smooth = out_path / f'{fileID}_nv_mesh_smooth.stl' 
+            nv_smooth = apply_laplacian_smooth_vedo(nv_vedo, iters=20, lambd=0.5)
+            nv_path_smooth = out_path / f'{fileID}_nv_mesh_smooth.obj' 
             vedo.write(nv_smooth, nv_path_smooth)
 
-    
-
-
-
 def mesh_menu():
-    """
-    Provides an interactive menu with editable text fields to set parameters
-    and run mesh generation.
-    """
-
-    # Default parameters
     default_params = {
         "pixelDimensions": "1.0, 1.0, 1.0"
     }
  
-    # Create widgets for each parameter
     pixel_dim_widget = widgets.Text(
         value=default_params["pixelDimensions"],
         description='Pixel Dimensions:',
         layout=widgets.Layout(description_width='initial'),
         style={'description_width': '40%'}
     )
-
-    # Path widgets
 
     pred_path_widget = FileChooser(
         Path.cwd().as_posix(), 
@@ -94,7 +127,6 @@ def mesh_menu():
             clear_output()
             print("Starting analysis with the following parameters:")
 
-            # Construct params dictionary from widget values
             params = {}
             try:
                 params["pixelDimensions"] = tuple([float(d.strip()) for d in pixel_dim_widget.value.split(',')])
@@ -107,7 +139,7 @@ def mesh_menu():
 
             pred_path_str = pred_path_widget.selected
     
-            if not pred_path_str :
+            if not pred_path_str:
                 raise ValueError("Please select input folder")
                 return
 
@@ -119,14 +151,12 @@ def mesh_menu():
 
             print(f" Segmentation Results Path: {pred_path}")
             print(f" Save Mesh results Path: {mesh_out}")
-        
 
             filenames = sorted(pred_path.glob("*.tiff"))
             filenames.extend(list(pred_path.glob('*.tif')))
             if not filenames:
                 raise ValueError(f"No .tiff files found in {pred_path}. Please check the path and file extensions.")
                 return
-
         
             print(f"{len(filenames)} files found to be analyzed")
             for fn in tqdm(filenames, desc= "Analysis file progress "):
@@ -141,9 +171,9 @@ def mesh_menu():
                 opp = mesh_out / fileID
                 opp.mkdir(parents=True, exist_ok=True)
                 mesh_compute(pred,params["pixelDimensions"],opp,fileID,smooth_use)
+    
     run_button.on_click(on_button_click)
 
-    # Display the widgets
     display(
         widgets.VBox([
             widgets.HTML("<b>Mesh Analysis Parameters</b>"),
@@ -156,9 +186,7 @@ def mesh_menu():
         ])
     )
 
-
 def analyze_single_component(comp_mesh, component_id, mesh_type, fileID, ref_z=np.array([0.0, 0.0, 1.0]), ref_x=np.array([1.0, 0.0, 0.0])):
-    """Calculates vector statistics and volume for a single connected component."""
     volume = comp_mesh.volume()
     comp_normals = comp_mesh.compute_normals(points=False).vertex_normals
     comp_tangents, _ = calculate_tbn_safe(comp_normals, ref_z, ref_x)
@@ -179,13 +207,7 @@ def analyze_single_component(comp_mesh, component_id, mesh_type, fileID, ref_z=n
 
     return results
 
-
 def component_analysis(mesh, mesh_type, base_path, fileID):
-    """
-    Splits the mesh into connected components and calculates statistics for each.
-    Returns the list of statistics dictionaries.
-    """
-
     components = mesh.split()
     all_stats = []
 
@@ -199,29 +221,21 @@ def component_analysis(mesh, mesh_type, base_path, fileID):
     return all_stats
 
 def save_global_stats(all_sv_stats, all_nv_stats, base_path):
-    """Saves the accumulated component statistics to global CSV files."""
-
     col_order = ['image_id', 'vessel', 'volume', 'normal_mean', 'normal_std', 'tan_mean', 'tan_std']
     
-    # Guardar NV stats
     if all_nv_stats:
         df_nv_stats = pd.DataFrame(all_nv_stats)
         csv_nv_out = base_path / 'Summary_nv_vectors_stats.csv'
         df_nv_stats = df_nv_stats[col_order]
         df_nv_stats.to_csv(csv_nv_out, index=False)
         
-
-    # Guardar SV stats
     if all_sv_stats:
         df_sv_stats = pd.DataFrame(all_sv_stats)
         csv_sv_out = base_path / 'Summary_sv_vectors_stats.csv'
         df_sv_stats = df_sv_stats[col_order]
         df_sv_stats.to_csv(csv_sv_out, index=False)
-        
-        
 
 def calculate_tbn_safe(normals, ref_primary, ref_secondary, epsilon=1e-6):
-    
     reference_primary = np.tile(ref_primary, (len(normals), 1))
     bitangents = np.cross(normals, reference_primary)
     bitangent_sq_norm = np.sum(bitangents**2, axis=1)
@@ -235,11 +249,9 @@ def calculate_tbn_safe(normals, ref_primary, ref_secondary, epsilon=1e-6):
     bitangents = bitangents / np.linalg.norm(bitangents, axis=1, keepdims=True)
     tangents = np.cross(bitangents, normals) 
     
-
     return tangents, bitangents
 
 def compute_vector(sv,nv, base_path,fileID):
-    
     ref_z = np.array([0.0, 0.0, 1.0]) 
     ref_x = np.array([1.0, 0.0, 0.0])
     
@@ -267,14 +279,7 @@ def compute_vector(sv,nv, base_path,fileID):
         nvt_out = base_path /  f'{fileID}_nv_tang.npy'
         np.save(nvt_out, nv_tangent )
 
-
 def vector_menu():
-    """
-    Provides an interactive menu with editable text fields to set parameters
-    and run the vector generation.
-    """
-
-  
     pred_path_widget = FileChooser(
         Path.cwd().as_posix(), 
         title='Select the mesh_vect_out folder path',
@@ -306,7 +311,7 @@ def vector_menu():
             pred_path_str = pred_path_widget.selected
             mesh_type = mesh_use_dropdown.value
 
-            if not pred_path_str :
+            if not pred_path_str:
                 raise ValueError("Please select input folder")
                 return
             
@@ -322,43 +327,42 @@ def vector_menu():
                     sv_mesh = None
                     
                     if mesh_type == 'smooth':
-                        if (element / f'{file}_nv_mesh_smooth.stl').is_file():
-                            nv_mesh = vedo.load(element /f'{file}_nv_mesh_smooth.stl')
+                        if (element / f'{file}_nv_mesh_smooth.obj').is_file():
+                            nv_mesh = vedo.load(element /f'{file}_nv_mesh_smooth.obj')
                         else:
-                            if (element / f'{file}_nv_mesh.stl').is_file():
-                                nv_mesh = vedo.load(element /f'{file}_nv_mesh.stl')
+                            if (element / f'{file}_nv_mesh.obj').is_file():
+                                nv_mesh = vedo.load(element /f'{file}_nv_mesh.obj')
 
-                        if (element / f'{file}_sv_mesh_smooth.stl').is_file():
-                            sv_mesh = vedo.load(element /f'{file}_sv_mesh_smooth.stl')
+                        if (element / f'{file}_sv_mesh_smooth.obj').is_file():
+                            sv_mesh = vedo.load(element /f'{file}_sv_mesh_smooth.obj')
                         else:
-                            if(element / f'{file}_sv_mesh.stl').is_file():
-                                sv_mesh = vedo.load(element /f'{file}_sv_mesh.stl')
+                            if(element / f'{file}_sv_mesh.obj').is_file():
+                                sv_mesh = vedo.load(element /f'{file}_sv_mesh.obj')
                     else:
                         
-                        if (element / f'{file}_nv_mesh.stl').is_file():
-                            nv_mesh = vedo.load(element /f'{file}_nv_mesh.stl')
+                        if (element / f'{file}_nv_mesh.obj').is_file():
+                            nv_mesh = vedo.load(element /f'{file}_nv_mesh.obj')
                         
-                        if (element / f'{file}_sv_mesh.stl').is_file():
-                            sv_mesh = vedo.load(element /f'{file}_sv_mesh.stl')
-                    
+                        if (element / f'{file}_sv_mesh.obj').is_file():
+                            sv_mesh = vedo.load(element /f'{file}_sv_mesh.obj')
                     
                     if sv_mesh is None and nv_mesh is None:
                         with open(pred_path / Path("Computation_log.txt"), "a") as f:
-                            f.write(f"{file} no .stl files found.\n")
+                            f.write(f"{file} no .obj files found.\n")
                     else:     
                         if sv_mesh is not None:
                             stats = component_analysis(sv_mesh, 'sv', element, file)
                             all_sv_stats.extend(stats)
                         else:
                             with open(pred_path / Path("Computation_log.txt"), "a") as f:
-                                f.write(f"{file} string vessels (sv) .stl file missing.\n")   
+                                f.write(f"{file} string vessels (sv) .obj file missing.\n")   
 
                         if nv_mesh is not None:
                             stats = component_analysis(nv_mesh, 'nv', element, file)
                             all_nv_stats.extend(stats)
                         else:
                             with open(pred_path / Path("Computation_log.txt"), "a") as f:
-                                f.write(f"{file} normal vessels (nv) .stl file missing.\n") 
+                                f.write(f"{file} normal vessels (nv) .obj file missing.\n") 
                         
                     compute_vector(sv_mesh,nv_mesh,element,file)
         
@@ -367,15 +371,12 @@ def vector_menu():
             print(f"Vector csv files saved at {pred_path}")
             if os.path.exists(pred_path / Path("Computation_log.txt")):
                 print('#####################################WARNING#############################')
-                print('For some images .stl files are missing and the vector computations are omitted')
+                print('For some images .obj files are missing and the vector computations are omitted')
                 print('The deatails are on the log file:')
                 print(pred_path / Path("Computation_log.txt"))
 
-            
-
     run_button.on_click(on_button_click)
 
-    # Display the widgets
     display(
         widgets.VBox([
             widgets.HTML("<b>Vector Computation Parameters</b>"),
@@ -397,7 +398,6 @@ def visualizer(base_path):
 
     viewer = napari.Viewer()
 
-
     try:
         sv_norm_data = np.load(sv_file)
 
@@ -411,11 +411,9 @@ def visualizer(base_path):
     except FileNotFoundError:
         print(f"Error: File not found {sv_file}")
 
-
     try:
         nv_norm_data = np.load(nv_file)
         
-
         viewer.add_vectors(
             nv_norm_data,
             name=f'{file_id}_nv_norm',
@@ -425,7 +423,6 @@ def visualizer(base_path):
         )
     except FileNotFoundError:
         print(f"Error: File not found {nv_file}")
-
 
     try:
         svt_norm_data = np.load(svt_file)
@@ -454,12 +451,7 @@ def visualizer(base_path):
 
     napari.run()
     
-
 def visualizer_menu():
-    """
-    Provides an interactive menu with editable text fields to set parameters
-    and run the visualization for the vectors.
-    """
     pred_path_widget = FileChooser(
         Path.cwd().as_posix(), 
         title='Select the path tho the desired .npy files',
@@ -479,7 +471,7 @@ def visualizer_menu():
             clear_output()
             pred_path_str = pred_path_widget.selected
 
-            if not pred_path_str :
+            if not pred_path_str:
                 raise ValueError("Please select input folder")
                 return
             
@@ -500,12 +492,8 @@ def visualizer_menu():
             if deploy:
                 visualizer(pred_path)
                 
-                  
-            
-
     run_button.on_click(on_button_click)
 
-    # Display the widgets
     display(
         widgets.VBox([
             widgets.HTML("<b>Vector Visualization</b>"),

@@ -617,7 +617,6 @@ def create_inference_menu():
                 base_cfg.model.net['pred_slice2vol']['perycites_correction'] = apply_pericytes_checkbox.value
                 
                 base_cfg.data.inference_input.dir = Path(selected_path_base) 
-                base_cfg.data.inference_input.data_type = ".tiff,.tif"
             except Exception as e:
                 print(f"Config Error: {e}")
                 return
